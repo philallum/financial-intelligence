@@ -34,35 +34,35 @@ This plan implements the Financial Intelligence Platform — a batch-driven, cos
     - Create `src/config/constants.ts` for FLAT_THRESHOLD (2 pips), UTC grid boundaries, batch timing
     - _Requirements: 12.1, 12.5_
 
-- [ ] 2. Database schema and migrations
-  - [~] 2.1 Create Supabase migration for core data tables
+- [x] 2. Database schema and migrations
+  - [x] 2.1 Create Supabase migration for core data tables
     - Write SQL migration for `raw_candles` table with unique constraint and time-descending index
     - Write SQL migration for `market_fingerprints` table with LIST partition by asset, 5 pgvector columns (L1-L5), extended_state JSONB, and unique constraint
     - Create EUR/USD partition: `market_fingerprints_eurusd`
     - Write SQL migration for `market_outcomes` table with foreign key to fingerprints and composite indexes
     - _Requirements: 1.4, 1.6, 3.5, 12.3_
 
-  - [~] 2.2 Create Supabase migration for similarity, forecast, and cache tables
+  - [x] 2.2 Create Supabase migration for similarity, forecast, and cache tables
     - Write SQL migration for `similarity_matches` table with unique constraint and batch/rank indexes
     - Write SQL migration for `forecasts` table with JSONB direction_probabilities, version columns, unique constraint
     - Write SQL migration for `cached_forecasts` table with asset primary key, TTL boundary, conditional index
     - _Requirements: 2.3, 4.4, 6.1, 6.6_
 
-  - [~] 2.3 Create Supabase migration for observability and versioning tables
+  - [x] 2.3 Create Supabase migration for observability and versioning tables
     - Write SQL migration for `execution_traces` table with batch/engine index
     - Write SQL migration for `batch_runs` table with status tracking and engine version snapshot
     - Write SQL migration for `engine_versions` table with unique constraint on engine_name + version
     - Write SQL migration for `api_keys` table with key_hash, tier, rate limit
     - _Requirements: 10.1, 16.1, 16.2, 11.7_
 
-  - [~] 2.4 Create HNSW vector indexes for fingerprint similarity search
+  - [x] 2.4 Create HNSW vector indexes for fingerprint similarity search
     - Create partial HNSW indexes with cosine ops for L1 (market_structure), L2 (volatility), L3 (liquidity) vectors
     - Create partial HNSW indexes with L2 ops for L4 (macro) and L5 (sentiment) vectors
     - Create filtering indexes for regime and session pre-similarity gate
     - All indexes scoped to `market_fingerprints_eurusd` partition with `WHERE timeframe = '4H'`
     - _Requirements: 2.1, 2.2, 12.3_
 
-- [~] 3. Checkpoint — Verify infrastructure
+- [x] 3. Checkpoint — Verify infrastructure
   - Ensure all migrations apply cleanly, test framework runs, and project builds without errors. Ask the user if questions arise.
 
 - [ ] 4. Data ingestion service with provider fallback
