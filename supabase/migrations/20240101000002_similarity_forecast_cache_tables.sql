@@ -57,4 +57,4 @@ CREATE TABLE IF NOT EXISTS cached_forecasts (
     created_at TIMESTAMP WITH TIME ZONE DEFAULT NOW()
 );
 
-CREATE INDEX IF NOT EXISTS idx_cached_asset ON cached_forecasts (asset) WHERE valid_until > NOW();
+CREATE INDEX IF NOT EXISTS idx_cached_asset ON cached_forecasts (asset, valid_until);

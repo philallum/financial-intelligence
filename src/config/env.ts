@@ -12,7 +12,11 @@ export interface EnvConfig {
   readonly ALPHA_VANTAGE_API_KEY: string;
   readonly FINNHUB_API_KEY: string;
   readonly NEWS_API_KEY: string;
-  readonly GOOGLE_GENAI_API_KEY: string;
+
+  // Google Cloud / Vertex AI (Gemini)
+  readonly GCP_PROJECT_ID: string;
+  readonly GCP_LOCATION: string;
+  readonly GEMINI_MODEL: string;
 
   // Supabase
   readonly SUPABASE_URL: string;
@@ -30,7 +34,7 @@ const REQUIRED_IN_PRODUCTION: readonly string[] = [
   'ALPHA_VANTAGE_API_KEY',
   'FINNHUB_API_KEY',
   'NEWS_API_KEY',
-  'GOOGLE_GENAI_API_KEY',
+  'GCP_PROJECT_ID',
   'SUPABASE_URL',
   'SUPABASE_ANON_KEY',
   'SUPABASE_SERVICE_ROLE_KEY',
@@ -90,7 +94,9 @@ function loadEnvConfig(): EnvConfig {
     ALPHA_VANTAGE_API_KEY: getRequiredString('ALPHA_VANTAGE_API_KEY', nodeEnv),
     FINNHUB_API_KEY: getRequiredString('FINNHUB_API_KEY', nodeEnv),
     NEWS_API_KEY: getRequiredString('NEWS_API_KEY', nodeEnv),
-    GOOGLE_GENAI_API_KEY: getRequiredString('GOOGLE_GENAI_API_KEY', nodeEnv),
+    GCP_PROJECT_ID: getRequiredString('GCP_PROJECT_ID', nodeEnv),
+    GCP_LOCATION: process.env['GCP_LOCATION'] ?? 'us-central1',
+    GEMINI_MODEL: process.env['GEMINI_MODEL'] ?? 'gemini-2.5-flash',
     SUPABASE_URL: getRequiredString('SUPABASE_URL', nodeEnv),
     SUPABASE_ANON_KEY: getRequiredString('SUPABASE_ANON_KEY', nodeEnv),
     SUPABASE_SERVICE_ROLE_KEY: getRequiredString('SUPABASE_SERVICE_ROLE_KEY', nodeEnv),

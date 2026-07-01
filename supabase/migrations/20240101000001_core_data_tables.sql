@@ -33,7 +33,7 @@ CREATE INDEX IF NOT EXISTS idx_raw_candles_asset_time
 -- state layer columns (L1-L5) and extensible JSONB state.
 -- ============================================================
 CREATE TABLE IF NOT EXISTS market_fingerprints (
-    fingerprint_id UUID PRIMARY KEY,
+    fingerprint_id UUID NOT NULL,
     asset VARCHAR(10) NOT NULL,
     timeframe VARCHAR(4) NOT NULL DEFAULT '4H',
     timestamp_utc TIMESTAMP WITH TIME ZONE NOT NULL,
@@ -55,6 +55,8 @@ CREATE TABLE IF NOT EXISTS market_fingerprints (
     session VARCHAR(10) NOT NULL,
     created_at TIMESTAMP WITH TIME ZONE DEFAULT NOW(),
     batch_id UUID NOT NULL,
+    -- Primary key must include partition column (asset) for partitioned tables
+    PRIMARY KEY (fingerprint_id, asset),
     CONSTRAINT uq_fingerprint UNIQUE (asset, timeframe, timestamp_utc)
 ) PARTITION BY LIST (asset);
 
@@ -68,7 +70,8 @@ CREATE TABLE IF NOT EXISTS market_fingerprints_eurusd PARTITION OF market_finger
 -- ============================================================
 CREATE TABLE IF NOT EXISTS market_outcomes (
     outcome_id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
-    fingerprint_id UUID NOT NULL REFERENCES market_fingerprints(fingerprint_id),
+    fingerprint_id UUID NOT NULL,
+    asset VARCHAR(10) NOT NULL DEFAULT 'EURUSD',
     horizon VARCHAR(4) NOT NULL DEFAULT '4H',
     net_return_pips NUMERIC(10, 2) NOT NULL,
     max_favourable_excursion NUMERIC(10, 2) NOT NULL,
@@ -77,6 +80,8 @@ CREATE TABLE IF NOT EXISTS market_outcomes (
     timestamp_utc TIMESTAMP WITH TIME ZONE NOT NULL,
     batch_id UUID,
     engine_version VARCHAR(10),
+    CONSTRAINT fk_outcome_fingerprint FOREIGN KEY (fingerprint_id, asset)
+        REFERENCES market_fingerprints(fingerprint_id, asset),
     CONSTRAINT uq_outcome UNIQUE (fingerprint_id, horizon)
 );
 
