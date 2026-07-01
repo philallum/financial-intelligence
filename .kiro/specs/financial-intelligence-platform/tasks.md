@@ -373,8 +373,8 @@ This plan implements the Financial Intelligence Platform — a batch-driven, cos
     - Set environment variables for API keys, Supabase connection, engine config
     - _Requirements: 12.1, 12.2, 12.6, 12.7, 12.8_
 
-- [ ] 20. Integration tests
-  - [~] 20.1 Write integration tests for end-to-end batch pipeline
+- [x] 20. Integration tests
+  - [x] 20.1 Write integration tests for end-to-end batch pipeline
     - Test full pipeline execution with seeded database (ingestion → fingerprint → similarity → outcome → forecast → confidence → cache)
     - Verify batch_runs status transitions and engine version snapshot
     - Verify execution traces emitted for each stage
@@ -382,7 +382,7 @@ This plan implements the Financial Intelligence Platform — a batch-driven, cos
     - Test pipeline failure and halt behaviour (stage failure → downstream halted)
     - _Requirements: 14.1, 14.2, 14.5, 16.2_
 
-  - [~] 20.2 Write integration tests for API endpoint contracts
+  - [x] 20.2 Write integration tests for API endpoint contracts
     - Test GET /v1/forecast/{asset} returns correct response schema
     - Test response mode parameter filtering (forecast, trade, explain, raw, research)
     - Test authentication and tier enforcement (401 on invalid key, tier rejection)
@@ -390,14 +390,14 @@ This plan implements the Financial Intelligence Platform — a batch-driven, cos
     - Test cached path response time < 300ms
     - _Requirements: 8.1, 8.2, 8.3, 8.4, 8.5, 11.6, 11.9_
 
-  - [~] 20.3 Write integration tests for batch-runtime boundary enforcement
+  - [x] 20.3 Write integration tests for batch-runtime boundary enforcement
     - Verify batch layer does NOT access live market data
     - Verify runtime layer does NOT compute historical statistics
     - Verify fingerprint is sole originating input to batch pipeline
     - Verify each engine receives only its predecessor's output
     - _Requirements: 9.1, 9.2, 9.3, 9.4_
 
-- [~] 21. Final checkpoint — Ensure all tests pass
+- [x] 21. Final checkpoint — Ensure all tests pass
   - Ensure all tests pass, property-based tests validate all 15 correctness properties, integration tests confirm end-to-end flow, and the system builds for deployment. Ask the user if questions arise.
 
 ## Notes

@@ -654,7 +654,9 @@ export class IngestionService {
         throw new Error(`Failed to upsert candle: ${error.message}`);
       }
     } else {
-      const { error } = await this.supabase.from('raw_candles').insert(record);
+      const { error } = await this.supabase
+        .from('raw_candles')
+        .upsert(record, { onConflict: 'asset,timeframe,timestamp_utc' });
 
       if (error) {
         throw new Error(`Failed to store candle: ${error.message}`);

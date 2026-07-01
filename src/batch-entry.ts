@@ -21,7 +21,7 @@ import { BatchOrchestrator } from './services/pipeline/batch-orchestrator.js';
 import type { StageHandlers } from './services/pipeline/batch-orchestrator.js';
 
 /** Assets to process in the batch pipeline (MVP: EUR/USD only). */
-const BATCH_ASSETS = [{ asset: 'EUR/USD', timeframe: '4H' }];
+const BATCH_ASSETS = [{ asset: 'EURUSD', timeframe: '4H' }];
 
 /**
  * Compute the current candle boundary timestamp.
@@ -60,14 +60,91 @@ function createStageHandlers(supabase: SupabaseClient): StageHandlers {
     },
     async similarity(input, batchId) {
       const { getRegimeWeights } = await import('./engines/similarity-engine.js');
-      void batchId;
-      // Retrieve weights based on query fingerprint's regime
       const weights = getRegimeWeights(input.query_fingerprint.regime);
-      // Real implementation queries pgvector via Supabase RPC
-      // Returns empty matches if no historical data exists yet
+      const fp = input.query_fingerprint;
+
+      // Query historical fingerprints with same asset/timeframe, excluding the query itself
+      // Pre-filter by regime for better matches
+      const { data: candidates, error } = await supabase
+        .from('market_fingerprints')
+        .select('fingerprint_id, market_structure_vector, volatility_vector, liquidity_vector, macro_vector, sentiment_vector, regime')
+        .eq('asset', fp.asset)
+        .eq('timeframe', fp.timeframe)
+        .neq('fingerprint_id', fp.fingerprint_id)
+        .limit(500);
+
+      if (error || !candidates || candidates.length === 0) {
+        return { matches: [], match_count: 0, regime_weights_used: weights };
+      }
+
+      // Compute cosine similarity for each candidate across all 5 layers
+      type CandidateRow = {
+        fingerprint_id: string;
+        market_structure_vector: string | number[] | null;
+        volatility_vector: string | number[] | null;
+        liquidity_vector: string | number[] | null;
+        macro_vector: string | number[] | null;
+        sentiment_vector: string | number[] | null;
+        regime: unknown;
+      };
+
+      function parseVector(v: string | number[] | null): number[] {
+        if (!v) return [];
+        if (Array.isArray(v)) return v;
+        // pgvector returns as string like "[0.5,0.3,...]"
+        try { return JSON.parse(v); } catch { return []; }
+      }
+
+      function cosineSimilarity(a: number[], b: number[]): number {
+        if (a.length === 0 || b.length === 0 || a.length !== b.length) return 0;
+        let dot = 0, normA = 0, normB = 0;
+        for (let i = 0; i < a.length; i++) {
+          dot += a[i] * b[i];
+          normA += a[i] * a[i];
+          normB += b[i] * b[i];
+        }
+        const denom = Math.sqrt(normA) * Math.sqrt(normB);
+        return denom === 0 ? 0 : dot / denom;
+      }
+
+      const scored = (candidates as CandidateRow[]).map((c) => {
+        const l1 = cosineSimilarity(fp.state_layers.market_structure, parseVector(c.market_structure_vector));
+        const l2 = cosineSimilarity(fp.state_layers.volatility_profile, parseVector(c.volatility_vector));
+        const l3 = cosineSimilarity(fp.state_layers.liquidity_field, parseVector(c.liquidity_vector));
+        const l4 = cosineSimilarity(fp.state_layers.macro_context, parseVector(c.macro_vector));
+        const l5 = cosineSimilarity(fp.state_layers.sentiment_pressure, parseVector(c.sentiment_vector));
+
+        const score = l1 * weights.market_structure + l2 * weights.volatility + l3 * weights.liquidity + l4 * weights.macro + l5 * weights.sentiment;
+        return { fingerprint_id: c.fingerprint_id, score, l1, l2, l3, l4, l5 };
+      });
+
+      // Sort by score descending, take top 50
+      scored.sort((a, b) => b.score - a.score);
+      const topMatches = scored.slice(0, input.top_n);
+
+      const matches = topMatches.map((m, idx) => ({
+        fingerprint_id: fp.fingerprint_id,
+        match_fingerprint_id: m.fingerprint_id,
+        similarity_score: Math.round(m.score * 1000000) / 1000000,
+        rank: idx + 1,
+        layer_breakdown: {
+          market_structure: Math.round(m.l1 * 1000000) / 1000000,
+          volatility: Math.round(m.l2 * 1000000) / 1000000,
+          liquidity: Math.round(m.l3 * 1000000) / 1000000,
+          macro: Math.round(m.l4 * 1000000) / 1000000,
+          sentiment: Math.round(m.l5 * 1000000) / 1000000,
+        },
+        match_explanation: {
+          matched_layers: [m.l1 > 0.8 ? 'market_structure' : '', m.l2 > 0.8 ? 'volatility' : '', m.l3 > 0.8 ? 'liquidity' : ''].filter(Boolean),
+          mismatched_layers: [m.l4 < 0.5 ? 'macro' : '', m.l5 < 0.5 ? 'sentiment' : ''].filter(Boolean),
+          primary_match_reason: 'weighted_vector_similarity',
+        },
+        batch_id: batchId,
+      }));
+
       return {
-        matches: [],
-        match_count: 0,
+        matches,
+        match_count: matches.length,
         regime_weights_used: weights,
       };
     },
@@ -76,9 +153,9 @@ function createStageHandlers(supabase: SupabaseClient): StageHandlers {
       // Fetch forward returns for matched fingerprints from DB
       const { data } = await supabase
         .from('market_outcomes')
-        .select('forward_return_pips')
+        .select('net_return_pips')
         .in('fingerprint_id', input.fingerprint_ids);
-      const returns = (data ?? []).map((r) => (r as { forward_return_pips: number }).forward_return_pips);
+      const returns = (data ?? []).map((r) => (r as { net_return_pips: number }).net_return_pips);
       if (returns.length === 0) {
         throw new Error('No forward returns found for matched fingerprints');
       }
@@ -91,7 +168,12 @@ function createStageHandlers(supabase: SupabaseClient): StageHandlers {
     async confidence(input, fingerprintId) {
       const { computeConfidenceFromInput } = await import('./engines/confidence-engine.js');
       void fingerprintId;
-      return computeConfidenceFromInput(input);
+      // Normalise variance to [0, 1] — raw std_dev in pips, cap at 50 pips as max
+      const normalisedInput = {
+        ...input,
+        variance: Math.min(input.variance / 50, 1),
+      };
+      return computeConfidenceFromInput(normalisedInput);
     },
     async cache_write(data) {
       const { CacheWriter } = await import('./services/cache/cache-writer.js');
