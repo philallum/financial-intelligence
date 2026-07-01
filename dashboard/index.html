@@ -1,0 +1,130 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Financial Intelligence Platform</title>
+  <style>
+    * { margin: 0; padding: 0; box-sizing: border-box; }
+    body { font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif; background: #0f1419; color: #e7e9ea; padding: 2rem; }
+    h1 { font-size: 1.4rem; margin-bottom: 1.5rem; color: #8b98a5; font-weight: 400; }
+    .card { background: #1a1f25; border: 1px solid #2f3336; border-radius: 12px; padding: 1.5rem; margin-bottom: 1rem; }
+    .card h2 { font-size: 0.85rem; text-transform: uppercase; letter-spacing: 0.05em; color: #8b98a5; margin-bottom: 1rem; }
+    .asset { font-size: 1.8rem; font-weight: 600; margin-bottom: 0.5rem; }
+    .direction { display: flex; gap: 1.5rem; margin: 1rem 0; }
+    .dir-item { text-align: center; }
+    .dir-item .label { font-size: 0.75rem; color: #8b98a5; margin-bottom: 0.25rem; }
+    .dir-item .value { font-size: 1.6rem; font-weight: 600; }
+    .dir-item.up .value { color: #00c853; }
+    .dir-item.down .value { color: #ff1744; }
+    .dir-item.flat .value { color: #ffab00; }
+    .metrics { display: grid; grid-template-columns: repeat(auto-fit, minmax(140px, 1fr)); gap: 1rem; margin-top: 1rem; }
+    .metric { padding: 0.75rem; background: #0f1419; border-radius: 8px; }
+    .metric .label { font-size: 0.7rem; color: #8b98a5; text-transform: uppercase; letter-spacing: 0.03em; }
+    .metric .value { font-size: 1.1rem; font-weight: 500; margin-top: 0.25rem; }
+    .badge { display: inline-block; padding: 0.2rem 0.6rem; border-radius: 4px; font-size: 0.75rem; font-weight: 600; }
+    .badge-go { background: #00c85320; color: #00c853; }
+    .badge-conditional { background: #ffab0020; color: #ffab00; }
+    .badge-no_go { background: #ff174420; color: #ff1744; }
+    .valid-until { font-size: 0.8rem; color: #8b98a5; margin-top: 1rem; }
+    .status { font-size: 0.8rem; color: #8b98a5; margin-bottom: 1rem; }
+    .error { color: #ff1744; }
+    #loading { color: #8b98a5; }
+    .config { margin-bottom: 1.5rem; display: flex; align-items: center; gap: 0.75rem; }
+    .config input { background: #1a1f25; border: 1px solid #2f3336; border-radius: 6px; padding: 0.5rem 0.75rem; color: #e7e9ea; font-size: 0.85rem; width: 320px; }
+    .config button { background: #1d9bf0; color: white; border: none; border-radius: 6px; padding: 0.5rem 1rem; cursor: pointer; font-size: 0.85rem; }
+    .config button:hover { background: #1a8cd8; }
+  </style>
+</head>
+<body>
+  <h1>Financial Intelligence Platform</h1>
+
+  <div class="config">
+    <input id="api-url" type="text" placeholder="API URL" value="https://financial-intelligence-api-517029156879.europe-west1.run.app">
+    <button onclick="fetchForecast()">Refresh</button>
+  </div>
+
+  <div id="content">
+    <p id="loading">Loading forecast...</p>
+  </div>
+
+  <script>
+    async function fetchForecast() {
+      const baseUrl = document.getElementById('api-url').value.replace(/\/$/, '');
+      const content = document.getElementById('content');
+
+      content.innerHTML = '<p id="loading">Loading...</p>';
+
+      try {
+        const res = await fetch(`${baseUrl}/v1/forecast/EURUSD`);
+        const data = await res.json();
+
+        if (!res.ok) {
+          content.innerHTML = `<div class="card"><p class="error">Error: ${data.message || data.error || 'Unknown error'}</p></div>`;
+          return;
+        }
+
+        const dp = data.direction_probabilities;
+        const label = data.tradeability_label || 'NO_GO';
+        const badgeClass = `badge-${label.toLowerCase()}`;
+
+        content.innerHTML = `
+          <div class="card">
+            <h2>Current Forecast</h2>
+            <div class="asset">EUR/USD</div>
+            <div class="direction">
+              <div class="dir-item up">
+                <div class="label">UP</div>
+                <div class="value">${(dp.up * 100).toFixed(0)}%</div>
+              </div>
+              <div class="dir-item down">
+                <div class="label">DOWN</div>
+                <div class="value">${(dp.down * 100).toFixed(0)}%</div>
+              </div>
+              <div class="dir-item flat">
+                <div class="label">FLAT</div>
+                <div class="value">${(dp.flat * 100).toFixed(0)}%</div>
+              </div>
+            </div>
+            <div class="metrics">
+              <div class="metric">
+                <div class="label">Expected Move</div>
+                <div class="value">${data.expected_move_pips} pips</div>
+              </div>
+              <div class="metric">
+                <div class="label">Confidence</div>
+                <div class="value">${(data.confidence_final * 100).toFixed(1)}%</div>
+              </div>
+              <div class="metric">
+                <div class="label">Tradeability</div>
+                <div class="value"><span class="badge ${badgeClass}">${label}</span></div>
+              </div>
+              <div class="metric">
+                <div class="label">Score</div>
+                <div class="value">${data.tradeability_score}</div>
+              </div>
+              <div class="metric">
+                <div class="label">Spread</div>
+                <div class="value">${data.execution_metrics?.spread_penalty || '—'}</div>
+              </div>
+              <div class="metric">
+                <div class="label">Session</div>
+                <div class="value">${data.execution_metrics?.session_alignment || '—'}</div>
+              </div>
+              <div class="metric">
+                <div class="label">News</div>
+                <div class="value">${data.execution_metrics?.news_buffer_status || '—'}</div>
+              </div>
+            </div>
+            <div class="valid-until">Valid until: ${new Date(data.forecast_valid_until).toLocaleString()}</div>
+          </div>
+        `;
+      } catch (err) {
+        content.innerHTML = `<div class="card"><p class="error">Failed to connect: ${err.message}</p></div>`;
+      }
+    }
+
+    fetchForecast();
+  </script>
+</body>
+</html>
