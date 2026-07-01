@@ -65,8 +65,8 @@ This plan implements the Financial Intelligence Platform — a batch-driven, cos
 - [x] 3. Checkpoint — Verify infrastructure
   - Ensure all migrations apply cleanly, test framework runs, and project builds without errors. Ask the user if questions arise.
 
-- [ ] 4. Data ingestion service with provider fallback
-  - [~] 4.1 Implement data ingestion service with provider registry
+- [x] 4. Data ingestion service with provider fallback
+  - [x] 4.1 Implement data ingestion service with provider registry
     - Create `src/services/ingestion/ingestion-service.ts` implementing `IngestionInput → IngestionOutput` contract
     - Implement provider registry with Twelve Data (primary), Massive API (fallback), Yahoo Finance (emergency)
     - Implement fallback chain: attempt primary (10s timeout) → fallback on failure → emergency on second failure → skip cycle on all failures
@@ -74,15 +74,15 @@ This plan implements the Financial Intelligence Platform — a batch-driven, cos
     - Store results to `raw_candles` table via Supabase client
     - _Requirements: 1.1, 1.5, 1.7, 14.1, 14.3_
 
-  - [~] 4.2 Implement macro and sentiment data fetchers
+  - [x] 4.2 Implement macro and sentiment data fetchers
     - Create `src/services/ingestion/macro-fetcher.ts` for DXY, VIX, SPX from Twelve Data and US10Y from Alpha Vantage
     - Create `src/services/ingestion/sentiment-fetcher.ts` for news from Finnhub + NewsAPI and economic calendar from Alpha Vantage
     - Implement rate limit tracking per provider per cycle
     - Return structured data matching L4 (macro_context) and L5 (sentiment_pressure) state layer inputs
     - _Requirements: 1.1, 1.5_
 
-- [ ] 5. Fingerprint engine
-  - [~] 5.1 Implement fingerprint generation engine
+- [x] 5. Fingerprint engine
+  - [x] 5.1 Implement fingerprint generation engine
     - Create `src/engines/fingerprint-engine.ts` implementing `FingerprintInput → Fingerprint` contract
     - Implement deterministic fingerprint_id generation: hash(asset + timestamp_utc)
     - Compute return_profile (net_return_pips, range_pips) from OHLC
@@ -92,7 +92,7 @@ This plan implements the Financial Intelligence Platform — a batch-driven, cos
     - Store fingerprint as immutable record in `market_fingerprints`
     - _Requirements: 1.1, 1.2, 1.3, 1.4, 1.6_
 
-  - [~] 5.2 Implement fingerprint serialisation and parsing
+  - [x] 5.2 Implement fingerprint serialisation and parsing
     - Create `src/engines/fingerprint-serialiser.ts` with `serialise(fingerprint: Fingerprint): string` and `parse(json: string): Fingerprint`
     - Enforce canonical JSON: lexicographic key ordering, consistent number formatting
     - Implement strict parsing with validation of all required fields
@@ -100,14 +100,14 @@ This plan implements the Financial Intelligence Platform — a batch-driven, cos
     - Return parsing errors indicating which field is missing/invalid
     - _Requirements: 15.1, 15.2, 15.3, 15.4, 15.5_
 
-  - [ ] 5.3 Write property test for fingerprint serialisation round-trip
+  - [x] 5.3 Write property test for fingerprint serialisation round-trip
     - **Property 3: Fingerprint Serialization Round-Trip**
     - Generate random valid Fingerprint objects using fast-check arbitraries
     - Assert: serialise → parse → serialise produces byte-identical output to first serialisation
     - Minimum 100 iterations
     - **Validates: Requirements 15.1, 15.2, 15.3**
 
-  - [ ] 5.4 Write property test for engine determinism (fingerprint)
+  - [x] 5.4 Write property test for engine determinism (fingerprint)
     - **Property 1: Engine Determinism (Fingerprint Engine)**
     - Generate random valid OHLC + market context inputs
     - Assert: executing fingerprint engine twice with identical inputs produces bit-identical output
