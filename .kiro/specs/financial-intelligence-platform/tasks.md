@@ -114,8 +114,8 @@ This plan implements the Financial Intelligence Platform — a batch-driven, cos
     - Minimum 100 iterations
     - **Validates: Requirements 1.2, 13.1**
 
-- [ ] 6. Similarity engine
-  - [~] 6.1 Implement similarity retrieval engine
+- [x] 6. Similarity engine
+  - [x] 6.1 Implement similarity retrieval engine
     - Create `src/engines/similarity-engine.ts` implementing `SimilarityInput → SimilarityOutput` contract
     - Implement Step 1: Pre-filter candidates by asset, timeframe, regime metadata via SQL
     - Implement Step 2: pgvector HNSW search across 5 layers (cosine for L1-L3, L2 distance for L4-L5)
@@ -126,22 +126,22 @@ This plan implements the Financial Intelligence Platform — a batch-driven, cos
     - Handle fewer than 50 matches gracefully (return all available, record count)
     - _Requirements: 2.1, 2.2, 2.3, 2.4, 2.5, 2.6, 2.7_
 
-  - [ ] 6.2 Write property test for similarity pre-filter correctness
+  - [x] 6.2 Write property test for similarity pre-filter correctness
     - **Property 4: Similarity Pre-Filter Correctness**
     - Generate random query fingerprints and candidate sets with varied asset/timeframe/regime combinations
     - Assert: all fingerprints passing pre-filter match query's asset and timeframe and satisfy regime filter constraints
     - Minimum 100 iterations
     - **Validates: Requirements 2.2**
 
-  - [ ] 6.3 Write property test for engine determinism (similarity)
+  - [x] 6.3 Write property test for engine determinism (similarity)
     - **Property 1: Engine Determinism (Similarity Engine)**
     - Generate random valid fingerprints with consistent historical dataset
     - Assert: querying same fingerprint against same dataset produces identical ranked results
     - Minimum 100 iterations
     - **Validates: Requirements 2.6, 13.1**
 
-- [ ] 7. Outcome distribution engine
-  - [~] 7.1 Implement outcome distribution computation engine
+- [x] 7. Outcome distribution engine
+  - [x] 7.1 Implement outcome distribution computation engine
     - Create `src/engines/outcome-engine.ts` implementing `OutcomeInput → OutcomeDistribution` contract
     - Accept array of matched fingerprint_ids only (no similarity scores consumed)
     - Query `market_outcomes` table for forward 4H returns of each matched ID
@@ -153,7 +153,7 @@ This plan implements the Financial Intelligence Platform — a batch-driven, cos
     - Return error if matched fingerprint count is zero
     - _Requirements: 3.1, 3.2, 3.3, 3.4, 3.5, 3.6_
 
-  - [ ] 7.2 Write property test for FLAT threshold classification
+  - [x] 7.2 Write property test for FLAT threshold classification
     - **Property 6: FLAT Threshold Classification**
     - Generate random continuous return values R (floats around ±2 pip boundary)
     - Assert: UP when R > +2 pips, DOWN when R < -2 pips, FLAT when |R| ≤ 2 pips
@@ -161,15 +161,15 @@ This plan implements the Financial Intelligence Platform — a batch-driven, cos
     - Minimum 100 iterations
     - **Validates: Requirements 3.3**
 
-  - [ ] 7.3 Write property test for outcome distribution equal weighting
+  - [x] 7.3 Write property test for outcome distribution equal weighting
     - **Property 5: Outcome Distribution Equal Weighting**
     - Generate random sets of forward returns paired with random similarity scores
     - Assert: reordering matches or changing similarity scores does NOT alter distribution output
     - Minimum 100 iterations
     - **Validates: Requirements 3.1, 3.4**
 
-- [ ] 8. Forecast engine
-  - [~] 8.1 Implement probabilistic forecast generation engine
+- [x] 8. Forecast engine
+  - [x] 8.1 Implement probabilistic forecast generation engine
     - Create `src/engines/forecast-engine.ts` implementing `ForecastInput → Forecast` contract
     - Convert OutcomeDistribution into directional probabilities (up, down, flat) rounded to 2 decimal places
     - Ensure probabilities sum to exactly 1.00
@@ -179,15 +179,15 @@ This plan implements the Financial Intelligence Platform — a batch-driven, cos
     - Reject input if sample_size < 1 or distribution empty
     - _Requirements: 4.1, 4.2, 4.3, 4.4, 4.5_
 
-  - [ ] 8.2 Write property test for forecast probability normalisation
+  - [x] 8.2 Write property test for forecast probability normalisation
     - **Property 7: Forecast Probability Normalisation**
     - Generate random valid outcome distributions
     - Assert: output up + down + flat = 1.00 exactly, each in [0.00, 1.00]
     - Minimum 100 iterations
     - **Validates: Requirements 4.3**
 
-- [ ] 9. Confidence engine
-  - [~] 9.1 Implement statistically bounded confidence scoring engine
+- [x] 9. Confidence engine
+  - [x] 9.1 Implement statistically bounded confidence scoring engine
     - Create `src/engines/confidence-engine.ts` implementing `ConfidenceInput → ConfidenceOutput` contract
     - Implement C_final = C_raw × S(N) × R formula
     - Implement Sample_Size_Dampener: S(N) = min(1.0, N / 30), capped at 0.5 when N < 30
@@ -197,14 +197,14 @@ This plan implements the Financial Intelligence Platform — a batch-driven, cos
     - Reject if N = 0 or any input outside [0, 1] range
     - _Requirements: 5.1, 5.2, 5.3, 5.4, 5.5, 5.6_
 
-  - [ ] 9.2 Write property test for confidence formula correctness
+  - [x] 9.2 Write property test for confidence formula correctness
     - **Property 8: Confidence Formula Correctness**
     - Generate random C_raw ∈ [0,1], N ∈ [1,200], R ∈ [0,1]
     - Assert: C_final = C_raw × S(N) × R and C_final ∈ [0.0, 1.0]
     - Minimum 100 iterations
     - **Validates: Requirements 5.1**
 
-  - [ ] 9.3 Write property test for sample size dampener cap
+  - [x] 9.3 Write property test for sample size dampener cap
     - **Property 9: Sample Size Dampener Cap**
     - Generate random N in [1, 29]
     - Assert: S(N) ≤ 0.5, resulting in C_final ≤ 0.5 × C_raw × R
@@ -214,8 +214,8 @@ This plan implements the Financial Intelligence Platform — a batch-driven, cos
 - [~] 10. Checkpoint — Verify core engines
   - Ensure all engine implementations compile, unit tests pass, and property tests pass. Ask the user if questions arise.
 
-- [ ] 11. Tradeability engine (runtime)
-  - [~] 11.1 Implement tradeability evaluation engine
+- [x] 11. Tradeability engine (runtime)
+  - [x] 11.1 Implement tradeability evaluation engine
     - Create `src/engines/tradeability-engine.ts` implementing `TradeabilityInput → TradeabilityOutput` contract
     - Compute tradeability_score = S_static × D_dynamic, bounded [0.00, 1.00]
     - Implement label banding: score > 0.75 → "GO", [0.45, 0.75] → "CONDITIONAL", < 0.45 → "NO_GO"
@@ -225,14 +225,14 @@ This plan implements the Financial Intelligence Platform — a batch-driven, cos
     - Store threshold config in versioned configuration artifact tied to engine_version
     - _Requirements: 7.1, 7.2, 7.3, 7.4, 7.5_
 
-  - [ ] 11.2 Write property test for tradeability score formula
+  - [x] 11.2 Write property test for tradeability score formula
     - **Property 11: Tradeability Score Formula**
     - Generate random valid static inputs (confidence, stability) and dynamic inputs (spread, session, liquidity, news)
     - Assert: score = S_static × D_dynamic and score ∈ [0.00, 1.00]
     - Minimum 100 iterations
     - **Validates: Requirements 7.1**
 
-  - [ ] 11.3 Write property test for tradeability label banding
+  - [x] 11.3 Write property test for tradeability label banding
     - **Property 12: Tradeability Label Banding**
     - Generate random scores in [0, 1]
     - Assert: "GO" when > 0.75, "CONDITIONAL" when in [0.45, 0.75], "NO_GO" when < 0.45
@@ -240,15 +240,15 @@ This plan implements the Financial Intelligence Platform — a batch-driven, cos
     - Minimum 100 iterations
     - **Validates: Requirements 7.2**
 
-  - [ ] 11.4 Write property test for tradeability graceful degradation
+  - [x] 11.4 Write property test for tradeability graceful degradation
     - **Property 13: Tradeability Graceful Degradation**
     - Generate random inputs with one or more dynamic sources set to unavailable/null
     - Assert: label = "NO_GO", score = 0, unavailable source indicated in response
     - Minimum 100 iterations
     - **Validates: Requirements 7.5**
 
-- [ ] 12. Batch pipeline orchestrator
-  - [~] 12.1 Implement batch pipeline orchestration service
+- [x] 12. Batch pipeline orchestrator
+  - [x] 12.1 Implement batch pipeline orchestration service
     - Create `src/services/pipeline/batch-orchestrator.ts`
     - Implement 7-stage sequential pipeline: ingestion → fingerprint → similarity → outcome → forecast → confidence → cache write
     - Each stage starts only after predecessor succeeds
@@ -259,7 +259,7 @@ This plan implements the Financial Intelligence Platform — a batch-driven, cos
     - Mark batch as completed only when all 7 stages succeed
     - _Requirements: 14.1, 14.2, 14.3, 14.4, 14.5, 10.6_
 
-  - [~] 12.2 Implement cache writing service with TTL calculation
+  - [x] 12.2 Implement cache writing service with TTL calculation
     - Create `src/services/cache/cache-writer.ts`
     - Compute TTL = remaining time in current 4H window
     - If remaining time < 60 seconds, set TTL to 0 and skip caching
@@ -268,7 +268,7 @@ This plan implements the Financial Intelligence Platform — a batch-driven, cos
     - Key by asset — one active cached forecast per asset
     - _Requirements: 6.1, 6.2, 6.3, 6.4, 6.5, 6.6, 6.7_
 
-  - [ ] 12.3 Write property test for cache TTL calculation
+  - [x] 12.3 Write property test for cache TTL calculation
     - **Property 10: Cache TTL Calculation**
     - Generate random timestamps within 4H windows
     - Assert: TTL = window_end - current_time for normal cases
@@ -276,8 +276,8 @@ This plan implements the Financial Intelligence Platform — a batch-driven, cos
     - Minimum 100 iterations
     - **Validates: Requirements 6.1, 6.2**
 
-- [ ] 13. Execution trace and observability
-  - [~] 13.1 Implement execution trace emitter
+- [x] 13. Execution trace and observability
+  - [x] 13.1 Implement execution trace emitter
     - Create `src/services/observability/trace-emitter.ts`
     - Emit structured trace after every engine execution (success or failure)
     - Compute input_hash (SHA-256 of serialised input) and output_hash (SHA-256 of serialised output)
@@ -286,18 +286,18 @@ This plan implements the Financial Intelligence Platform — a batch-driven, cos
     - Handle trace emission failure: record missing trace event without crashing pipeline
     - _Requirements: 16.1, 16.2, 16.3_
 
-  - [ ] 13.2 Write property test for execution trace emission
+  - [x] 13.2 Write property test for execution trace emission
     - **Property 15: Execution Trace Emission**
     - Generate random engine execution results (success and failure cases)
     - Assert: trace is emitted containing input_hash, output_hash, execution_time_ms, engine_version, and sample_size
     - Minimum 100 iterations
     - **Validates: Requirements 16.1, 16.3**
 
-- [~] 14. Checkpoint — Verify pipeline and observability
+- [x] 14. Checkpoint — Verify pipeline and observability
   - Ensure batch orchestrator runs end-to-end with test data, traces are emitted correctly, and cache TTL logic works. Ask the user if questions arise.
 
-- [ ] 15. API gateway and product layer
-  - [~] 15.1 Implement Express API gateway with endpoint routing
+- [x] 15. API gateway and product layer
+  - [x] 15.1 Implement Express API gateway with endpoint routing
     - Create `src/api/server.ts` with Express app setup, versioned routes under `/v1/`
     - Create `src/api/routes/forecast.ts` for `GET /v1/forecast/:asset`
     - Create `src/api/routes/similarity.ts` for `GET /v1/similarity/:asset`
@@ -307,7 +307,7 @@ This plan implements the Financial Intelligence Platform — a batch-driven, cos
     - Target <300ms response time on cached path
     - _Requirements: 8.1, 8.2, 8.3, 8.4, 8.5_
 
-  - [~] 15.2 Implement authentication and tier resolution middleware
+  - [x] 15.2 Implement authentication and tier resolution middleware
     - Create `src/api/middleware/auth.ts` for API key authentication
     - Validate API key hash against `api_keys` table
     - Resolve caller tier (retail, developer, research, integrator, internal)
@@ -315,7 +315,7 @@ This plan implements the Financial Intelligence Platform — a batch-driven, cos
     - Return 401 on invalid/expired key, reject requests exceeding tier permissions
     - _Requirements: 11.5, 11.6, 11.7_
 
-  - [~] 15.3 Implement response mode filtering and tier-based field stripping
+  - [x] 15.3 Implement response mode filtering and tier-based field stripping
     - Create `src/api/middleware/response-filter.ts` implementing `ResponseModeRouter` interface
     - Support 5 response modes: forecast, trade, explain, raw, research
     - Default to "forecast" mode when parameter absent (per Req 11.12)
@@ -324,7 +324,7 @@ This plan implements the Financial Intelligence Platform — a batch-driven, cos
     - Strip fields: retail MUST NOT receive raw vectors or similarity matrices
     - _Requirements: 11.1, 11.2, 11.3, 11.8, 11.9, 11.10, 11.12_
 
-  - [ ] 15.4 Write property test for tier-based response filtering
+  - [x] 15.4 Write property test for tier-based response filtering
     - **Property 14: Tier-Based Response Filtering**
     - Generate random full forecast responses and random customer tiers
     - Assert: filtered response contains only fields authorised for that tier
@@ -334,8 +334,8 @@ This plan implements the Financial Intelligence Platform — a batch-driven, cos
     - Minimum 100 iterations
     - **Validates: Requirements 11.1, 11.2, 11.3**
 
-- [ ] 16. Edge caching layer
-  - [~] 16.1 Implement edge caching with dynamic TTL
+- [x] 16. Edge caching layer
+  - [x] 16.1 Implement edge caching with dynamic TTL
     - Create `src/api/middleware/edge-cache.ts`
     - Implement cache key formula: `{asset}:{timeframe}:{timestamp_bucket}`
     - Compute dynamic TTL: remaining time in current 4H candle block
@@ -344,8 +344,8 @@ This plan implements the Financial Intelligence Platform — a batch-driven, cos
     - MVP implementation: in-memory cache on Cloud Run instance (upgradeable to Cloudflare Workers KV)
     - _Requirements: 6.3, 12.4_
 
-- [ ] 17. Engine versioning and schema completeness
-  - [~] 17.1 Implement engine version management service
+- [x] 17. Engine versioning and schema completeness
+  - [x] 17.1 Implement engine version management service
     - Create `src/services/versioning/version-service.ts`
     - Load active engine versions at batch start from `engine_versions` table
     - Ensure consistent version snapshot used throughout entire batch (no mid-batch changes)
@@ -353,18 +353,18 @@ This plan implements the Financial Intelligence Platform — a batch-driven, cos
     - Implement version increment logic for engine_version, quantile_table_version, fingerprint_schema_version
     - _Requirements: 10.1, 10.2, 10.3, 10.4, 10.5, 10.6_
 
-  - [ ] 17.2 Write property test for engine output schema completeness
+  - [x] 17.2 Write property test for engine output schema completeness
     - **Property 2: Engine Output Schema Completeness**
     - Generate random valid inputs for each engine
     - Assert: every successful output contains engine_version, quantile_table_version (where applicable), fingerprint_schema_version (where applicable), and all schema-required fields
     - Minimum 100 iterations
     - **Validates: Requirements 1.3, 2.3, 3.5, 4.4, 5.5, 10.1, 16.1**
 
-- [~] 18. Checkpoint — Verify API and product layer
+- [x] 18. Checkpoint — Verify API and product layer
   - Ensure all API endpoints respond correctly, authentication works, tier filtering is enforced, and caching prevents redundant DB hits. Ask the user if questions arise.
 
-- [ ] 19. Cloud Run deployment configuration
-  - [~] 19.1 Create Cloud Run service definitions and Dockerfiles
+- [x] 19. Cloud Run deployment configuration
+  - [x] 19.1 Create Cloud Run service definitions and Dockerfiles
     - Create `Dockerfile` for batch pipeline service (Node.js LTS base)
     - Create `Dockerfile` for API service (Node.js LTS base, Express)
     - Create `cloudbuild.yaml` or deployment scripts for both services
@@ -374,7 +374,7 @@ This plan implements the Financial Intelligence Platform — a batch-driven, cos
     - _Requirements: 12.1, 12.2, 12.6, 12.7, 12.8_
 
 - [ ] 20. Integration tests
-  - [ ] 20.1 Write integration tests for end-to-end batch pipeline
+  - [~] 20.1 Write integration tests for end-to-end batch pipeline
     - Test full pipeline execution with seeded database (ingestion → fingerprint → similarity → outcome → forecast → confidence → cache)
     - Verify batch_runs status transitions and engine version snapshot
     - Verify execution traces emitted for each stage
@@ -382,7 +382,7 @@ This plan implements the Financial Intelligence Platform — a batch-driven, cos
     - Test pipeline failure and halt behaviour (stage failure → downstream halted)
     - _Requirements: 14.1, 14.2, 14.5, 16.2_
 
-  - [ ] 20.2 Write integration tests for API endpoint contracts
+  - [~] 20.2 Write integration tests for API endpoint contracts
     - Test GET /v1/forecast/{asset} returns correct response schema
     - Test response mode parameter filtering (forecast, trade, explain, raw, research)
     - Test authentication and tier enforcement (401 on invalid key, tier rejection)
@@ -390,7 +390,7 @@ This plan implements the Financial Intelligence Platform — a batch-driven, cos
     - Test cached path response time < 300ms
     - _Requirements: 8.1, 8.2, 8.3, 8.4, 8.5, 11.6, 11.9_
 
-  - [ ] 20.3 Write integration tests for batch-runtime boundary enforcement
+  - [~] 20.3 Write integration tests for batch-runtime boundary enforcement
     - Verify batch layer does NOT access live market data
     - Verify runtime layer does NOT compute historical statistics
     - Verify fingerprint is sole originating input to batch pipeline

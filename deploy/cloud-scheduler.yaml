@@ -1,0 +1,119 @@
+# =============================================================================
+# Cloud Scheduler Configuration — Batch Pipeline Triggers
+# =============================================================================
+# Defines 6 cron jobs that trigger the batch pipeline every 4 hours.
+# Each trigger fires at 2 minutes past the hour (60-180s buffer after candle close).
+#
+# Schedule: 00:02, 04:02, 08:02, 12:02, 16:02, 20:02 UTC
+# Target: Cloud Run batch service (fip-batch) via authenticated HTTP POST
+#
+# Deploy with the companion script: deploy/setup-scheduler.sh
+#
+# Requirements: 12.2, 14.1
+# =============================================================================
+
+# Configuration for all 6 Cloud Scheduler jobs
+# These trigger the batch pipeline at each 4H candle boundary + 2 minute buffer
+
+schedulerJobs:
+  - name: fip-batch-trigger-0002
+    description: "Trigger batch pipeline at 00:02 UTC (after 00:00 candle close)"
+    schedule: "2 0 * * *"
+    timeZone: "UTC"
+    httpTarget:
+      uri: "https://fip-batch-HASH-REGION.a.run.app"
+      httpMethod: POST
+      headers:
+        Content-Type: "application/json"
+      body: '{"trigger":"scheduled","candle_boundary":"00:00"}'
+      oidcToken:
+        serviceAccountEmail: "fip-scheduler@PROJECT_ID.iam.gserviceaccount.com"
+    retryConfig:
+      retryCount: 1
+      maxRetryDuration: "60s"
+    attemptDeadline: "900s"
+
+  - name: fip-batch-trigger-0402
+    description: "Trigger batch pipeline at 04:02 UTC (after 04:00 candle close)"
+    schedule: "2 4 * * *"
+    timeZone: "UTC"
+    httpTarget:
+      uri: "https://fip-batch-HASH-REGION.a.run.app"
+      httpMethod: POST
+      headers:
+        Content-Type: "application/json"
+      body: '{"trigger":"scheduled","candle_boundary":"04:00"}'
+      oidcToken:
+        serviceAccountEmail: "fip-scheduler@PROJECT_ID.iam.gserviceaccount.com"
+    retryConfig:
+      retryCount: 1
+      maxRetryDuration: "60s"
+    attemptDeadline: "900s"
+
+  - name: fip-batch-trigger-0802
+    description: "Trigger batch pipeline at 08:02 UTC (after 08:00 candle close)"
+    schedule: "2 8 * * *"
+    timeZone: "UTC"
+    httpTarget:
+      uri: "https://fip-batch-HASH-REGION.a.run.app"
+      httpMethod: POST
+      headers:
+        Content-Type: "application/json"
+      body: '{"trigger":"scheduled","candle_boundary":"08:00"}'
+      oidcToken:
+        serviceAccountEmail: "fip-scheduler@PROJECT_ID.iam.gserviceaccount.com"
+    retryConfig:
+      retryCount: 1
+      maxRetryDuration: "60s"
+    attemptDeadline: "900s"
+
+  - name: fip-batch-trigger-1202
+    description: "Trigger batch pipeline at 12:02 UTC (after 12:00 candle close)"
+    schedule: "2 12 * * *"
+    timeZone: "UTC"
+    httpTarget:
+      uri: "https://fip-batch-HASH-REGION.a.run.app"
+      httpMethod: POST
+      headers:
+        Content-Type: "application/json"
+      body: '{"trigger":"scheduled","candle_boundary":"12:00"}'
+      oidcToken:
+        serviceAccountEmail: "fip-scheduler@PROJECT_ID.iam.gserviceaccount.com"
+    retryConfig:
+      retryCount: 1
+      maxRetryDuration: "60s"
+    attemptDeadline: "900s"
+
+  - name: fip-batch-trigger-1602
+    description: "Trigger batch pipeline at 16:02 UTC (after 16:00 candle close)"
+    schedule: "2 16 * * *"
+    timeZone: "UTC"
+    httpTarget:
+      uri: "https://fip-batch-HASH-REGION.a.run.app"
+      httpMethod: POST
+      headers:
+        Content-Type: "application/json"
+      body: '{"trigger":"scheduled","candle_boundary":"16:00"}'
+      oidcToken:
+        serviceAccountEmail: "fip-scheduler@PROJECT_ID.iam.gserviceaccount.com"
+    retryConfig:
+      retryCount: 1
+      maxRetryDuration: "60s"
+    attemptDeadline: "900s"
+
+  - name: fip-batch-trigger-2002
+    description: "Trigger batch pipeline at 20:02 UTC (after 20:00 candle close)"
+    schedule: "2 20 * * *"
+    timeZone: "UTC"
+    httpTarget:
+      uri: "https://fip-batch-HASH-REGION.a.run.app"
+      httpMethod: POST
+      headers:
+        Content-Type: "application/json"
+      body: '{"trigger":"scheduled","candle_boundary":"20:00"}'
+      oidcToken:
+        serviceAccountEmail: "fip-scheduler@PROJECT_ID.iam.gserviceaccount.com"
+    retryConfig:
+      retryCount: 1
+      maxRetryDuration: "60s"
+    attemptDeadline: "900s"

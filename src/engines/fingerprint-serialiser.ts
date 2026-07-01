@@ -130,7 +130,11 @@ function canonicalStringify(value: unknown): string {
   if (typeof value === "string") {
     return JSON.stringify(value);
   }
-  if (typeof value === "number" || typeof value === "boolean") {
+  if (typeof value === "number") {
+    // Normalize -0 to 0 to ensure deterministic round-trip
+    return JSON.stringify(Object.is(value, -0) ? 0 : value);
+  }
+  if (typeof value === "boolean") {
     return JSON.stringify(value);
   }
   if (Array.isArray(value)) {

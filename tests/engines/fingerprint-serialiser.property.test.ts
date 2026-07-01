@@ -233,7 +233,10 @@ describe("Property 3: Fingerprint Serialisation Round-Trip", () => {
       fc.property(arbFingerprint, (fp) => {
         const json = serialise(fp);
         const parsed = parse(json);
-        expect(parsed).toEqual(fp);
+        // Canonical normalization: -0 becomes 0 in JSON (IEEE 754 canonical form).
+        // We compare against JSON-normalized input since serialise canonicalizes -0 → 0.
+        const normalized = JSON.parse(JSON.stringify(fp));
+        expect(parsed).toEqual(normalized);
       }),
       { numRuns: 100 },
     );

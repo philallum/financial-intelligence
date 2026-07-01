@@ -1,0 +1,97 @@
+# =============================================================================
+# Cloud Run Service Definition — API Service
+# =============================================================================
+# Declarative Cloud Run service configuration for the Express HTTP API.
+# Deploy with: gcloud run services replace deploy/cloud-run-api.yaml --region=europe-west2
+#
+# Key constraints:
+# - Max 2 instances (controls cost ceiling at £50/month)
+# - Concurrency 80 (handles up to 160 concurrent requests across 2 instances)
+# - 256MB memory (API serves cached data, low compute overhead)
+# - 60-second timeout (target <300ms response, 60s is generous fallback)
+# - Public access allowed (API serves external clients)
+# - Health check at /health
+#
+# Requirements: 12.1, 12.6, 12.7, 8.3
+# =============================================================================
+
+apiVersion: serving.knative.dev/v1
+kind: Service
+metadata:
+  name: fip-api
+  labels:
+    app: financial-intelligence-platform
+    component: api-gateway
+  annotations:
+    run.googleapis.com/description: "API gateway - serves cached forecasts and tradeability assessments"
+    run.googleapis.com/ingress: all
+spec:
+  template:
+    metadata:
+      annotations:
+        # Max 2 instances to control costs within £50/month ceiling
+        autoscaling.knative.dev/maxScale: "2"
+        autoscaling.knative.dev/minScale: "0"
+        # Allow CPU throttling when idle (saves cost on API service)
+        run.googleapis.com/cpu-throttling: "true"
+        # Startup CPU boost for faster cold starts
+        run.googleapis.com/startup-cpu-boost: "true"
+    spec:
+      # 60-second request timeout (API responses target <300ms)
+      timeoutSeconds: 60
+      # 80 concurrent requests per instance
+      containerConcurrency: 80
+      containers:
+        - image: gcr.io/PROJECT_ID/fip-api:latest
+          ports:
+            - containerPort: 8080
+              name: http1
+          resources:
+            limits:
+              memory: "256Mi"
+              cpu: "1000m"
+          env:
+            - name: NODE_ENV
+              value: "production"
+            - name: PORT
+              value: "8080"
+            # Secrets mounted from Secret Manager
+            - name: SUPABASE_URL
+              valueFrom:
+                secretKeyRef:
+                  name: supabase-url
+                  key: latest
+            - name: SUPABASE_SERVICE_ROLE_KEY
+              valueFrom:
+                secretKeyRef:
+                  name: supabase-service-role-key
+                  key: latest
+            - name: SUPABASE_ANON_KEY
+              valueFrom:
+                secretKeyRef:
+                  name: supabase-anon-key
+                  key: latest
+            - name: GOOGLE_GENAI_API_KEY
+              valueFrom:
+                secretKeyRef:
+                  name: google-genai-api-key
+                  key: latest
+          # Startup probe — allow up to 30s for cold start
+          startupProbe:
+            httpGet:
+              path: /health
+              port: 8080
+            initialDelaySeconds: 2
+            periodSeconds: 5
+            failureThreshold: 6
+          # Liveness probe — check every 30s
+          livenessProbe:
+            httpGet:
+              path: /health
+              port: 8080
+            initialDelaySeconds: 10
+            periodSeconds: 30
+            failureThreshold: 3
+  traffic:
+    - percent: 100
+      latestRevision: true

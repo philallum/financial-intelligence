@@ -1,0 +1,102 @@
+# =============================================================================
+# Cloud Run Service Definition — Batch Pipeline
+# =============================================================================
+# Declarative Cloud Run service configuration for the batch intelligence pipeline.
+# Deploy with: gcloud run services replace deploy/cloud-run-batch.yaml --region=europe-west2
+#
+# Key constraints:
+# - Max 1 instance (prevents parallel batch execution, controls cost)
+# - 15-minute timeout (900s) matching BATCH_TIMEOUT_MS
+# - 512MB memory for processing fingerprint vectors and similarity search
+# - Concurrency 1 (each instance processes one batch at a time)
+# - No public access (triggered by Cloud Scheduler via authenticated HTTP)
+#
+# Requirements: 12.1, 12.7, 12.8
+# =============================================================================
+
+apiVersion: serving.knative.dev/v1
+kind: Service
+metadata:
+  name: fip-batch
+  labels:
+    app: financial-intelligence-platform
+    component: batch-pipeline
+  annotations:
+    run.googleapis.com/description: "Batch intelligence pipeline - 7-stage sequential processing"
+    run.googleapis.com/launch-stage: BETA
+spec:
+  template:
+    metadata:
+      annotations:
+        # Max 1 instance to prevent overlapping batch runs and control cost
+        autoscaling.knative.dev/maxScale: "1"
+        autoscaling.knative.dev/minScale: "0"
+        # Disable CPU throttling so batch jobs get full CPU during execution
+        run.googleapis.com/cpu-throttling: "false"
+        # Allow startup CPU boost for faster cold starts
+        run.googleapis.com/startup-cpu-boost: "true"
+    spec:
+      # 15-minute timeout for the batch pipeline (matches BATCH_TIMEOUT_MS = 900000)
+      timeoutSeconds: 900
+      # One request at a time (batch runs are sequential)
+      containerConcurrency: 1
+      containers:
+        - image: gcr.io/PROJECT_ID/fip-batch:latest
+          resources:
+            limits:
+              memory: "512Mi"
+              cpu: "1000m"
+          env:
+            - name: NODE_ENV
+              value: "production"
+            - name: PORT
+              value: "8080"
+            # Secrets should be mounted from Secret Manager
+            - name: SUPABASE_URL
+              valueFrom:
+                secretKeyRef:
+                  name: supabase-url
+                  key: latest
+            - name: SUPABASE_SERVICE_ROLE_KEY
+              valueFrom:
+                secretKeyRef:
+                  name: supabase-service-role-key
+                  key: latest
+            - name: SUPABASE_ANON_KEY
+              valueFrom:
+                secretKeyRef:
+                  name: supabase-anon-key
+                  key: latest
+            - name: TWELVE_DATA_API_KEY
+              valueFrom:
+                secretKeyRef:
+                  name: twelve-data-api-key
+                  key: latest
+            - name: MASSIVE_API_KEY
+              valueFrom:
+                secretKeyRef:
+                  name: massive-api-key
+                  key: latest
+            - name: ALPHA_VANTAGE_API_KEY
+              valueFrom:
+                secretKeyRef:
+                  name: alpha-vantage-api-key
+                  key: latest
+            - name: FINNHUB_API_KEY
+              valueFrom:
+                secretKeyRef:
+                  name: finnhub-api-key
+                  key: latest
+            - name: NEWS_API_KEY
+              valueFrom:
+                secretKeyRef:
+                  name: news-api-key
+                  key: latest
+            - name: GOOGLE_GENAI_API_KEY
+              valueFrom:
+                secretKeyRef:
+                  name: google-genai-api-key
+                  key: latest
+  traffic:
+    - percent: 100
+      latestRevision: true

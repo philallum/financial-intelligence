@@ -1,0 +1,45 @@
+# =============================================================================
+# Docker ignore — exclude unnecessary files from build context
+# =============================================================================
+
+node_modules
+dist
+.git
+.gitignore
+.env
+.env.*
+!.env.example
+
+# IDE and editor
+.vscode
+.idea
+*.swp
+*.swo
+
+# Test files (not needed in production images)
+tests
+coverage
+*.test.ts
+*.property.test.ts
+
+# Documentation and specs
+.kiro
+docs
+*.md
+!README.md
+
+# Build artifacts
+*.tgz
+*.log
+
+# OS files
+.DS_Store
+Thumbs.db
+
+# Supabase (migrations are applied separately)
+supabase
+
+# Deploy configs (not needed inside container)
+deploy
+cloudbuild.yaml
+Dockerfile.*

@@ -1,0 +1,48 @@
+# =============================================================================
+# Dockerfile.batch — Batch Pipeline Service
+# =============================================================================
+# Multi-stage build for the batch intelligence pipeline.
+# Triggered by Cloud Scheduler every 4 hours.
+# Runs the 7-stage pipeline (ingestion → cache write) then exits.
+#
+# Requirements: 12.1, 12.8
+# =============================================================================
+
+# --- Stage 1: Build ---
+FROM node:22-alpine AS builder
+
+WORKDIR /app
+
+# Copy package files and install all dependencies (including devDependencies for tsc)
+COPY package.json package-lock.json ./
+RUN npm ci
+
+# Copy source code and TypeScript config
+COPY tsconfig.json ./
+COPY src/ ./src/
+
+# Compile TypeScript to JavaScript
+RUN npm run build
+
+# --- Stage 2: Production ---
+FROM node:22-alpine AS production
+
+WORKDIR /app
+
+# Set production environment
+ENV NODE_ENV=production
+
+# Copy package files and install production dependencies only
+COPY package.json package-lock.json ./
+RUN npm ci --omit=dev && npm cache clean --force
+
+# Copy compiled JavaScript from build stage
+COPY --from=builder /app/dist ./dist
+
+# Run as non-root user for security
+RUN addgroup -g 1001 -S appgroup && \
+    adduser -S appuser -u 1001 -G appgroup
+USER appuser
+
+# Batch entry point — runs pipeline then exits
+CMD ["node", "dist/batch-entry.js"]

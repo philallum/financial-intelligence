@@ -148,7 +148,7 @@ export const arbFingerprint: fc.Arbitrary<Fingerprint> = fc.record({
   fingerprint_id: arbFingerprintId,
   asset: fc.constant('EURUSD'),
   timeframe: fc.constant('4H'),
-  timestamp_utc: fc.date({ min: new Date('2019-01-01'), max: new Date('2025-01-01') }).map((d) => d.toISOString()),
+  timestamp_utc: fc.integer({ min: new Date('2019-01-01').getTime(), max: new Date('2025-01-01').getTime() }).map((ts) => new Date(ts).toISOString()),
   market_state_version: fc.constant('1.0.0'),
   ohlc: arbOHLC,
   return_profile: fc.record({
