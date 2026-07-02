@@ -1,6 +1,6 @@
 # Financial Intelligence Platform — Current State
 
-*Last updated: 2025-07-22*
+*Last updated: 2026-07-02*
 
 ## What's Built
 
@@ -49,12 +49,12 @@ Cloud Scheduler (6x daily) → Cloud Run Job (batch) → Supabase Postgres
 ```json
 {
   "asset": "EURUSD",
-  "direction_probabilities": { "up": 0.50, "down": 0.38, "flat": 0.12 },
-  "expected_move_pips": 0.56,
+  "direction_probabilities": { "up": 0.40, "down": 0.52, "flat": 0.08 },
+  "expected_move_pips": -4.01,
   "confidence_final": 0,
   "tradeability_score": 0,
   "tradeability_label": "NO_GO",
-  "forecast_valid_until": "2026-07-02T00:00:00+00:00",
+  "forecast_valid_until": "2026-07-02T16:00:00+00:00",
   "execution_metrics": {
     "spread_penalty": "low",
     "session_alignment": "suboptimal",
@@ -70,18 +70,18 @@ Cloud Scheduler (6x daily) → Cloud Run Job (batch) → Supabase Postgres
 | `raw_candles` | 10,504 | Historical + live OHLC data |
 | `market_fingerprints` | 10,502 | Deterministic market state vectors |
 | `market_outcomes` | 10,501 | Forward 4H returns per fingerprint |
-| `engine_versions` | 6 | Active engine version configs |
+| `engine_versions` | 12 | Active engine version configs |
 | `api_keys` | 4 | API keys (internal, retail, developer, research) |
 | `batch_runs` | 14 | Batch execution history |
 | `cached_forecasts` | 1 | Current active forecast |
 | `similarity_matches` | 0 | Legacy table (matches now persisted in research_similarity_archive) |
 | `forecasts` | 0 | Legacy table (forecasts now persisted in research_forecasts) |
-| `execution_traces` | ✓ | Structured traces from all pipeline stages (wired in Phase 5) |
-| `research_forecasts` | ✓ | Immutable forecast research archive (Phase 1) |
-| `research_evaluations` | ✓ | Forecast accuracy evaluations against realised outcomes (Phase 2) |
-| `research_similarity_archive` | ✓ | Similarity match history with full per-layer breakdown (Phase 3) |
-| `fingerprint_topology` | ✓ | Support/resistance topology per fingerprint (Phase 6) |
-| `research_experiments` | ✓ | A/B engine testing results and experiment outputs (Phase 5) |
+| `execution_traces` | 11+ | Structured traces from all pipeline stages (wired in Phase 5) |
+| `research_forecasts` | 1+ | Immutable forecast research archive (Phase 1) |
+| `research_evaluations` | 0 | Forecast accuracy evaluations against realised outcomes (Phase 2) |
+| `research_similarity_archive` | 50+ | Similarity match history with full per-layer breakdown (Phase 3) |
+| `fingerprint_topology` | 0 | Support/resistance topology per fingerprint (Phase 6) |
+| `research_experiments` | 0 | A/B engine testing results and experiment outputs (Phase 5) |
 
 ### Data Coverage
 
@@ -114,9 +114,9 @@ ingestion → fingerprint → topology → regime_v2 → similarity (+ archive) 
 
 ## Test Suite
 
-- **1054 tests** across 72 test files — 969 passing
+- **1071 tests** across 72 test files — all passing
 - 35 property-based test files (fast-check)
-- 4 integration test files (batch pipeline, API endpoints, boundary enforcement, research persist wiring)
+- 5 integration test files (batch pipeline, API endpoints, boundary enforcement, research persist wiring, research archive lifecycle)
 - 1 migration test file
 - TypeScript strict mode, zero compile errors
 
@@ -128,7 +128,7 @@ ingestion → fingerprint → topology → regime_v2 → similarity (+ archive) 
 4. ✓ Directional probability forecasts (UP/DOWN/FLAT)
 5. ✓ Cloud Scheduler triggering every 4 hours
 6. ✓ CORS enabled for browser access
-7. ✓ Local dashboard (single HTML file)
+7. ✓ Local dashboard (research-aware, queries API + Supabase for live data, traces, similarity matches)
 8. ✓ Research forecast archival — all forecasts persisted to immutable research_forecasts table (Phase 1)
 9. ✓ Automated forecast evaluation — matured forecasts scored against realised outcomes (Phase 2)
 10. ✓ Calibration measurement — 10-bucket confidence calibration with accuracy tracking (Phase 2)
@@ -194,10 +194,10 @@ src/
 ├── api-entry.ts       Cloud Run API entry point
 └── batch-entry.ts     Cloud Run Job entry point (12-stage pipeline + evaluation)
 
-tests/                 1054 tests (unit, property, integration, migration)
-dashboard/             Single-file HTML dashboard
+tests/                 1071 tests (unit, property, integration, migration)
+dashboard/             Single-file HTML dashboard (queries API + Supabase for research data)
 scripts/               Seed scripts (historical data)
-supabase/migrations/   9 SQL migration files (4 original + 5 research tables)
+supabase/migrations/   10 SQL migration files (4 original + 5 research tables + 1 engine version seed)
 deploy/                Cloud Run + Scheduler config
 ```
 
@@ -215,12 +215,12 @@ deploy/                Cloud Run + Scheduler config
 
 ## Next Steps (Suggested)
 
-1. **Website/Dashboard** — React or Next.js frontend for viewing forecasts and research data
-2. **Wire auth + response filtering** — Enable tiered access on the API
-3. **Connect live market data** — Real spread/liquidity feed for tradeability
-4. **Activate Confidence Engine v2 in production** — Switch from v1 dampener to evidence-based v2
-5. **Enable topology in similarity scoring** — Increase topology layer weight from 0.0 to a tuned value
-6. **Multi-asset** — Add GBP/USD, USD/JPY, etc.
-7. **CI/CD** — Cloud Build trigger on git push
-8. **Monitoring/Alerting** — Cloud Monitoring dashboards for batch health and API latency
-9. **Historical Replay** — Tooling to re-execute past batches with frozen engine versions
+1. **Wire auth + response filtering** — Enable tiered access on the API
+2. **Connect live market data** — Real spread/liquidity feed for tradeability
+3. **Activate Confidence Engine v2 in production** — Switch from v1 dampener to evidence-based v2
+4. **Enable topology in similarity scoring** — Increase topology layer weight from 0.0 to a tuned value
+5. **Multi-asset** — Add GBP/USD, USD/JPY, etc.
+6. **CI/CD** — Cloud Build trigger on git push
+7. **Monitoring/Alerting** — Cloud Monitoring dashboards for batch health and API latency
+8. **Historical Replay** — Tooling to re-execute past batches with frozen engine versions
+9. **Web frontend** — React or Next.js app replacing the local HTML dashboard
