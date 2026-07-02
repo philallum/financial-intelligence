@@ -263,7 +263,7 @@ describe("generateFingerprint", () => {
     expect(fp.asset).toBe("EURUSD");
     expect(fp.timeframe).toBe("4H");
     expect(fp.timestamp_utc).toBe("2024-06-15T08:00:00.000Z");
-    expect(fp.market_state_version).toBe("1.0.0");
+    expect(fp.market_state_version).toBe("1.1.0");
     expect(fp.ohlc).toEqual(SAMPLE_OHLC);
     expect(fp.return_profile).toBeDefined();
     expect(fp.return_profile.net_return_pips).toBeCloseTo(9, 1);

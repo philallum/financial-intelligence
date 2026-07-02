@@ -47,10 +47,11 @@ function createMockSupabase(options?: {
   const mockEqIsActive = vi.fn().mockReturnValue({ maybeSingle: mockMaybeSingle });
   const mockEqEngineName = vi.fn().mockReturnValue({ eq: mockEqIsActive });
 
-  // For loadActiveVersions() — select with eq('is_active', true)
-  const mockSelectLoadEq = vi.fn().mockResolvedValue(
+  // For loadActiveVersions() — select with eq('is_active', true) then order
+  const mockSelectLoadOrder = vi.fn().mockResolvedValue(
     options?.selectResult ?? { data: [], error: null },
   );
+  const mockSelectLoadEq = vi.fn().mockReturnValue({ order: mockSelectLoadOrder });
   const mockSelectLoad = vi.fn().mockReturnValue({ eq: mockSelectLoadEq });
 
   const mockFrom = vi.fn().mockImplementation((table: string) => {
@@ -501,10 +502,11 @@ describe('VersionService', () => {
   describe('batch consistency (Req 10.6)', () => {
     it('in-memory snapshot is NOT updated after incrementEngineVersion', async () => {
       // First, set up loadActiveVersions mock
-      const loadEq = vi.fn().mockResolvedValue({
+      const loadOrder = vi.fn().mockResolvedValue({
         data: SAMPLE_ENGINE_VERSIONS,
         error: null,
       });
+      const loadEq = vi.fn().mockReturnValue({ order: loadOrder });
       const loadSelect = vi.fn().mockReturnValue({ eq: loadEq });
 
       // Set up increment mocks

@@ -1,10 +1,10 @@
 # Financial Intelligence Platform — Current State
 
-*Last updated: 2026-07-01*
+*Last updated: 2025-07-22*
 
 ## What's Built
 
-A batch-driven FX forecasting system that generates 4H EUR/USD probabilistic forecasts using historical similarity matching. The platform runs every 4 hours, produces directional probability forecasts (UP/DOWN/FLAT), and serves them via a REST API with real-time tradeability evaluation.
+A batch-driven FX forecasting and research platform that generates 4H EUR/USD probabilistic forecasts using historical similarity matching, persists all outputs as an immutable research archive, and evaluates forecast accuracy automatically. The platform runs every 4 hours, produces directional probability forecasts (UP/DOWN/FLAT), serves them via a REST API with real-time tradeability evaluation, and maintains a permanent research archive of forecasts, evaluations, and similarity matches for longitudinal analysis.
 
 ## Architecture (Live)
 
@@ -74,9 +74,14 @@ Cloud Scheduler (6x daily) → Cloud Run Job (batch) → Supabase Postgres
 | `api_keys` | 4 | API keys (internal, retail, developer, research) |
 | `batch_runs` | 14 | Batch execution history |
 | `cached_forecasts` | 1 | Current active forecast |
-| `similarity_matches` | 0 | Populated per batch (not persisted in MVP) |
-| `forecasts` | 0 | Not persisted yet (goes directly to cache) |
-| `execution_traces` | 0 | Trace emitter not wired into batch-entry |
+| `similarity_matches` | 0 | Legacy table (matches now persisted in research_similarity_archive) |
+| `forecasts` | 0 | Legacy table (forecasts now persisted in research_forecasts) |
+| `execution_traces` | ✓ | Structured traces from all pipeline stages (wired in Phase 5) |
+| `research_forecasts` | ✓ | Immutable forecast research archive (Phase 1) |
+| `research_evaluations` | ✓ | Forecast accuracy evaluations against realised outcomes (Phase 2) |
+| `research_similarity_archive` | ✓ | Similarity match history with full per-layer breakdown (Phase 3) |
+| `fingerprint_topology` | ✓ | Support/resistance topology per fingerprint (Phase 6) |
+| `research_experiments` | ✓ | A/B engine testing results and experiment outputs (Phase 5) |
 
 ### Data Coverage
 
@@ -85,15 +90,16 @@ Cloud Scheduler (6x daily) → Cloud Run Job (batch) → Supabase Postgres
 - **History**: Jan 2020 – Jul 2026 (6.5 years, ~10,500 candles)
 - **Fingerprint corpus**: 10,502 (full coverage of all historical candles)
 
-## Batch Pipeline (7 stages)
+## Batch Pipeline (12 stages)
 
 ```
-ingestion → fingerprint → similarity → outcome → forecast → confidence → cache_write
+ingestion → fingerprint → topology → regime_v2 → similarity (+ archive) → outcome → forecast → confidence → cache_write → research_persist → evaluation
 ```
 
 - Runs every 4 hours at: 00:02, 04:02, 08:02, 12:02, 16:02, 20:02 UTC
 - Pipeline duration: ~2 seconds
 - Timeout: 15 minutes (max)
+- Evaluation stage runs post-pipeline (non-fatal on failure)
 
 ## Data Providers
 
@@ -108,29 +114,38 @@ ingestion → fingerprint → similarity → outcome → forecast → confidence
 
 ## Test Suite
 
-- **671 tests** across 41 test files — all passing
-- 16 property-based test files (fast-check)
-- 3 integration test files (batch pipeline, API endpoints, boundary enforcement)
+- **1054 tests** across 72 test files — 969 passing
+- 35 property-based test files (fast-check)
+- 4 integration test files (batch pipeline, API endpoints, boundary enforcement, research persist wiring)
+- 1 migration test file
 - TypeScript strict mode, zero compile errors
 
 ## What's Working
 
-1. ✓ Full batch pipeline end-to-end (ingestion through cache write)
+1. ✓ Full batch pipeline end-to-end (ingestion through cache write + research persist + evaluation)
 2. ✓ API serving cached forecasts with real-time tradeability
 3. ✓ Historical similarity matching (500 candidates, cosine similarity)
 4. ✓ Directional probability forecasts (UP/DOWN/FLAT)
 5. ✓ Cloud Scheduler triggering every 4 hours
 6. ✓ CORS enabled for browser access
 7. ✓ Local dashboard (single HTML file)
+8. ✓ Research forecast archival — all forecasts persisted to immutable research_forecasts table (Phase 1)
+9. ✓ Automated forecast evaluation — matured forecasts scored against realised outcomes (Phase 2)
+10. ✓ Calibration measurement — 10-bucket confidence calibration with accuracy tracking (Phase 2)
+11. ✓ Similarity match archival — all matches persisted with full per-layer breakdown (Phase 3)
+12. ✓ Confidence Engine v2 — evidence-based confidence using evaluation dataset (Phase 4)
+13. ✓ Execution traces wired to all pipeline stages via traceEngineExecution (Phase 5)
+14. ✓ Experimentation engine for A/B engine testing with production isolation (Phase 5)
+15. ✓ Support/Resistance Topology Engine — deterministic structural levels (Phase 6)
+16. ✓ Extended market features — rolling trend, ATR percentile, volatility regime score, session stats, correlations, macro state, sentiment summary (Phase 7)
+17. ✓ Regime Engine v2 — 9 regime types (trend, ranging, expansion, contraction, macro_driven, breakout, reversal, accumulation, distribution) with structured explanations (Phase 8)
 
 ## Known Limitations / Not Yet Implemented
 
 ### Pipeline Gaps
-- **Confidence always 0**: Sample size dampener is too aggressive with current match set; needs tuning
+- **Confidence always 0 (v1)**: Sample size dampener is too aggressive with current match set; Confidence Engine v2 (evidence-based) is now available as an alternative
 - **Tradeability always NO_GO**: Uses placeholder values for live spread/liquidity (no live feed connected)
-- **Execution traces**: Trace emitter exists but isn't wired into batch-entry handlers
-- **Forecasts table**: Results go directly to cache, not persisted in `forecasts` table
-- **Similarity matches**: Not persisted to `similarity_matches` table
+- **Topology similarity weight = 0.0**: Topology layer computed and stored but not yet contributing to similarity scoring (research-only)
 
 ### Missing Features
 - **Auth middleware not wired to routes**: API keys exist but endpoints are unauthenticated
@@ -153,16 +168,36 @@ ingestion → fingerprint → similarity → outcome → forecast → confidence
 src/
 ├── api/               Express routes + middleware (auth, response-filter, edge-cache)
 ├── config/            Environment vars + constants
-├── engines/           Pure computation engines (fingerprint, similarity, outcome, forecast, confidence, tradeability)
-├── services/          Side-effect services (ingestion, pipeline, cache, observability, versioning)
+├── engines/           Pure computation engines
+│   ├── fingerprint-engine.ts      Fingerprint generation + extended market features (Phase 7)
+│   ├── similarity-engine.ts       Regime-weighted cosine similarity matching
+│   ├── outcome-engine.ts          Empirical outcome distribution computation
+│   ├── forecast-engine.ts         Directional probability forecasting
+│   ├── confidence-engine.ts       Confidence scoring (v1 — dampener-based)
+│   ├── confidence-engine-v2.ts    Confidence scoring (v2 — evidence-based, Phase 4)
+│   ├── topology-engine.ts         Support/resistance topology computation (Phase 6)
+│   ├── regime-engine-v2.ts        9-regime classification with structured explanation (Phase 8)
+│   ├── tradeability-engine.ts     Tradeability scoring and labels
+│   └── fingerprint-serialiser.ts  Deterministic fingerprint serialisation
+├── research/          Research namespace (Phases 1–5)
+│   ├── persistence/       Forecast archive writer (Phase 1)
+│   ├── evaluation/        Evaluation engine + calibration (Phase 2)
+│   ├── archival/          Similarity match archiver (Phase 3)
+│   └── experimentation/   A/B engine testing (Phase 5)
+├── services/          Side-effect services
+│   ├── ingestion/         Data ingestion + macro/sentiment fetchers
+│   ├── cache/             Cache writer for serving layer
+│   ├── observability/     Trace emitter (wired into all stages, Phase 5)
+│   ├── pipeline/          Batch orchestrator
+│   └── versioning/        Engine version management
 ├── types/             TypeScript interfaces + enums
 ├── api-entry.ts       Cloud Run API entry point
-└── batch-entry.ts     Cloud Run Job entry point
+└── batch-entry.ts     Cloud Run Job entry point (12-stage pipeline + evaluation)
 
-tests/                 671 tests (unit, property, integration)
+tests/                 1054 tests (unit, property, integration, migration)
 dashboard/             Single-file HTML dashboard
 scripts/               Seed scripts (historical data)
-supabase/migrations/   4 SQL migration files
+supabase/migrations/   9 SQL migration files (4 original + 5 research tables)
 deploy/                Cloud Run + Scheduler config
 ```
 
@@ -180,11 +215,12 @@ deploy/                Cloud Run + Scheduler config
 
 ## Next Steps (Suggested)
 
-1. **Website/Dashboard** — React or Next.js frontend for viewing forecasts
+1. **Website/Dashboard** — React or Next.js frontend for viewing forecasts and research data
 2. **Wire auth + response filtering** — Enable tiered access on the API
 3. **Connect live market data** — Real spread/liquidity feed for tradeability
-4. **Fix confidence scoring** — Tune dampener or use more matches
-5. **Persist similarity/forecasts** — Store all pipeline outputs for audit trail
-6. **Wire execution traces** — Full observability pipeline
-7. **Multi-asset** — Add GBP/USD, USD/JPY, etc.
-8. **CI/CD** — Cloud Build trigger on git push
+4. **Activate Confidence Engine v2 in production** — Switch from v1 dampener to evidence-based v2
+5. **Enable topology in similarity scoring** — Increase topology layer weight from 0.0 to a tuned value
+6. **Multi-asset** — Add GBP/USD, USD/JPY, etc.
+7. **CI/CD** — Cloud Build trigger on git push
+8. **Monitoring/Alerting** — Cloud Monitoring dashboards for batch health and API latency
+9. **Historical Replay** — Tooling to re-execute past batches with frozen engine versions

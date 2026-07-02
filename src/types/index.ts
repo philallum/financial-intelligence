@@ -63,6 +63,87 @@ export interface RegimeOverlapContext {
 }
 
 // =============================================================================
+// Extended Market Features (Phase 7 — Rich Market Context)
+// =============================================================================
+
+/**
+ * Extended deterministic market features computed from historical candles,
+ * correlated market data, and calendar/macro information.
+ *
+ * Each feature is independently enableable via the engine_versions config.
+ * All scalar values normalised to [0, 1] and rounded to 6 decimal places.
+ * Missing data substitutes 0.5 (neutral default).
+ *
+ * Requirements: 14.1, 14.2, 14.3, 14.4, 14.5, 14.6, 14.7
+ */
+export interface ExtendedMarketFeatures {
+  /** Normalised rolling trend [0, 1] computed from up to 50 candles. */
+  rolling_trend?: number;
+  /** ATR percentile normalised [0, 1]. */
+  atr_percentile?: number;
+  /** Volatility regime score normalised [0, 1]. */
+  volatility_regime_score?: number;
+  /** Session statistics: candle count and average range per session. */
+  session_statistics?: {
+    asia: { count: number; avg_range: number };
+    london: { count: number; avg_range: number };
+    ny: { count: number; avg_range: number };
+  };
+  /** Correlated market alignment scores, each normalised [0, 1]. */
+  correlated_markets?: Record<string, number>;
+  /** Economic calendar summary. */
+  economic_calendar_summary?: {
+    high_impact_event: boolean;
+    hours_to_next_event: number;
+  };
+  /** Composite macro state normalised [0, 1]. */
+  macro_state?: number;
+  /** Composite sentiment score normalised [0, 1]. */
+  sentiment_summary?: number;
+}
+
+/**
+ * Configuration specifying which extended features to compute.
+ * Each key corresponds to a feature in ExtendedMarketFeatures.
+ * A feature is computed only when its key is true.
+ *
+ * Requirement 14.2: Each feature independently enableable.
+ */
+export interface ExtendedFeaturesConfig {
+  rolling_trend?: boolean;
+  atr_percentile?: boolean;
+  volatility_regime_score?: boolean;
+  session_statistics?: boolean;
+  correlated_markets?: boolean;
+  economic_calendar_summary?: boolean;
+  macro_state?: boolean;
+  sentiment_summary?: boolean;
+}
+
+/**
+ * Input data for computing extended market features.
+ * Historical candles, correlated market data, and calendar data are optional.
+ * When absent, features depending on them receive the neutral default (0.5).
+ *
+ * Requirements: 14.3, 14.4
+ */
+export interface ExtendedFeaturesInput {
+  /** Historical OHLC candles in chronological order (oldest first). Up to 50 used for rolling_trend. */
+  historical_candles?: OHLC[];
+  /** Correlated market alignment data: instrument name → alignment score [0, 1]. */
+  correlated_markets_data?: Record<string, number>;
+  /** Economic calendar data. */
+  economic_calendar_data?: {
+    high_impact_event: boolean;
+    hours_to_next_event: number;
+  };
+  /** Macro context data for macro_state computation. */
+  macro_context?: MacroContext;
+  /** Current candle timestamp for session classification. */
+  timestamp_utc: string;
+}
+
+// =============================================================================
 // Extended State Types (reserved for v2+)
 // =============================================================================
 
@@ -132,6 +213,7 @@ export interface Fingerprint {
     support_resistance_topology?: SupportResistanceTopology;
     indicator_profile?: IndicatorProfile;
     order_flow_summary?: OrderFlowSummary;
+    extended_market_features?: ExtendedMarketFeatures;
   };
   normalisation: {
     quantile_table_version: string;

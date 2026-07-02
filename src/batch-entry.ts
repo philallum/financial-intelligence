@@ -19,6 +19,12 @@ import { env } from './config/env.js';
 import { BATCH_TIMEOUT_MS } from './config/constants.js';
 import { BatchOrchestrator } from './services/pipeline/batch-orchestrator.js';
 import type { StageHandlers } from './services/pipeline/batch-orchestrator.js';
+import { createResearchArchiveWriter, createEvaluationEngine, createSimilarityArchiver } from './research/index.js';
+import type { ResearchForecastRecord, SimilarityArchiveRecord } from './research/index.js';
+import { traceEngineExecution } from './services/observability/trace-emitter.js';
+import { computeTopology } from './engines/topology-engine.js';
+import { classifyRegimeV2 } from './engines/regime-engine-v2.js';
+import type { OHLC } from './types/index.js';
 
 /** Assets to process in the batch pipeline (MVP: EUR/USD only). */
 const BATCH_ASSETS = [{ asset: 'EURUSD', timeframe: '4H' }];
@@ -48,6 +54,8 @@ function getCurrentCandleBoundary(): string {
  * Each handler follows the contract defined in batch-orchestrator.ts.
  */
 function createStageHandlers(supabase: SupabaseClient): StageHandlers {
+  const similarityArchiver = createSimilarityArchiver(supabase);
+
   return {
     async ingestion(input) {
       const { createDefaultIngestionService } = await import('./services/ingestion/ingestion-service.js');
@@ -58,6 +66,90 @@ function createStageHandlers(supabase: SupabaseClient): StageHandlers {
       const { generateFingerprint } = await import('./engines/fingerprint-engine.js');
       return generateFingerprint(input);
     },
+    async topology(fingerprintId, asset) {
+      // Fetch up to 120 most recent 4H candles for the asset, ordered chronologically (ASC)
+      const { data: candleRows, error: candleError } = await supabase
+        .from('raw_candles')
+        .select('open, high, low, close')
+        .eq('asset', asset)
+        .order('timestamp_utc', { ascending: true })
+        .limit(120);
+
+      if (candleError) {
+        console.error(`[BatchEntry] Topology: failed to fetch candles for ${asset}: ${candleError.message}`);
+        return;
+      }
+
+      const candles: OHLC[] = (candleRows ?? []).map((r) => ({
+        open: r.open as number,
+        high: r.high as number,
+        low: r.low as number,
+        close: r.close as number,
+      }));
+
+      // Compute topology
+      const topoOutput = computeTopology({
+        fingerprint_id: fingerprintId,
+        asset,
+        candles,
+      });
+
+      // Format topology_vector as pgvector string
+      const vectorStr = '[' + topoOutput.topology_vector.join(',') + ']';
+
+      // Persist to fingerprint_topology table
+      const { error: insertError } = await supabase
+        .from('fingerprint_topology')
+        .insert({
+          fingerprint_id: topoOutput.fingerprint_id,
+          asset: topoOutput.asset,
+          levels: topoOutput.levels,
+          topology_vector: vectorStr,
+          insufficient_history: topoOutput.insufficient_history,
+          candle_count_used: topoOutput.candle_count_used,
+          engine_version: topoOutput.engine_version,
+        });
+
+      if (insertError) {
+        // On duplicate key (fingerprint_id, asset) → log warning, continue
+        if (insertError.code === '23505') {
+          console.warn(`[BatchEntry] Topology: duplicate record for fingerprint=${fingerprintId}, asset=${asset} — skipping`);
+        } else {
+          console.error(`[BatchEntry] Topology: insert failed for ${asset}: ${insertError.message}`);
+        }
+      }
+    },
+    async regime_v2(fingerprint) {
+      // Classify using Regime Engine v2 (deterministic, uses state_layers + extended_state)
+      const regimeV2Output = classifyRegimeV2({
+        state_layers: fingerprint.state_layers,
+        extended_state: fingerprint.extended_state,
+      });
+
+      // Persist regime v2 classification to market_fingerprints.extended_state JSONB field
+      // under the key 'regime_v2_classification'. This is additive — does not modify
+      // existing RegimeClassification fields (volatility_regime, trend_regime, session).
+      const { error: updateError } = await supabase
+        .from('market_fingerprints')
+        .update({
+          extended_state: {
+            ...(fingerprint.extended_state ?? {}),
+            regime_v2_classification: regimeV2Output,
+          },
+        })
+        .eq('fingerprint_id', fingerprint.fingerprint_id);
+
+      if (updateError) {
+        console.error(
+          `[BatchEntry] Regime v2: failed to persist classification for fingerprint=${fingerprint.fingerprint_id}: ${updateError.message}`,
+        );
+        throw new Error(`Regime v2 persistence failed: ${updateError.message}`);
+      }
+
+      console.log(
+        `[BatchEntry] Regime v2: classified fingerprint=${fingerprint.fingerprint_id} as primary=${regimeV2Output.primary_regime}`,
+      );
+    },
     async similarity(input, batchId) {
       const { getRegimeWeights } = await import('./engines/similarity-engine.js');
       const weights = getRegimeWeights(input.query_fingerprint.regime);
@@ -65,12 +157,14 @@ function createStageHandlers(supabase: SupabaseClient): StageHandlers {
 
       // Query historical fingerprints with same asset/timeframe, excluding the query itself
       // Pre-filter by regime for better matches
+      // Deterministic ordering by fingerprint_id ensures reproducible candidate set (Req 2.6)
       const { data: candidates, error } = await supabase
         .from('market_fingerprints')
         .select('fingerprint_id, market_structure_vector, volatility_vector, liquidity_vector, macro_vector, sentiment_vector, regime')
         .eq('asset', fp.asset)
         .eq('timeframe', fp.timeframe)
         .neq('fingerprint_id', fp.fingerprint_id)
+        .order('fingerprint_id', { ascending: true })
         .limit(500);
 
       if (error || !candidates || candidates.length === 0) {
@@ -142,6 +236,28 @@ function createStageHandlers(supabase: SupabaseClient): StageHandlers {
         batch_id: batchId,
       }));
 
+      // Archive similarity matches before returning (halts pipeline on failure)
+      if (matches.length > 0) {
+        // Snapshot active engine versions for the archive records
+        const { data: evData } = await supabase
+          .from('engine_versions')
+          .select('engine_name, engine_version')
+          .eq('is_active', true)
+          .order('engine_name', { ascending: true });
+        const engineVersions: Record<string, string> = {};
+        for (const row of (evData ?? [])) {
+          engineVersions[row.engine_name as string] = row.engine_version as string;
+        }
+
+        const archiveRecords: SimilarityArchiveRecord[] = matches.map((m) => ({
+          ...m,
+          engine_versions: engineVersions,
+          created_at: new Date().toISOString(),
+        }));
+
+        await similarityArchiver.persistMatches(archiveRecords);
+      }
+
       return {
         matches,
         match_count: matches.length,
@@ -151,10 +267,12 @@ function createStageHandlers(supabase: SupabaseClient): StageHandlers {
     async outcome(input, queryFingerprintId, batchId) {
       const { computeDistributionFromReturns } = await import('./engines/outcome-engine.js');
       // Fetch forward returns for matched fingerprints from DB
+      // Deterministic ordering by fingerprint_id ensures reproducible outcome computation (Req 2.6)
       const { data } = await supabase
         .from('market_outcomes')
         .select('net_return_pips')
-        .in('fingerprint_id', input.fingerprint_ids);
+        .in('fingerprint_id', input.fingerprint_ids)
+        .order('fingerprint_id', { ascending: true });
       const returns = (data ?? []).map((r) => (r as { net_return_pips: number }).net_return_pips);
       if (returns.length === 0) {
         throw new Error('No forward returns found for matched fingerprints');
@@ -185,6 +303,37 @@ function createStageHandlers(supabase: SupabaseClient): StageHandlers {
         data.forecast,
         true, // batch completed — this is the final stage
       );
+    },
+    async research_persist(data) {
+      const archiveWriter = createResearchArchiveWriter(supabase);
+
+      // Compute forecast_expiry: 4 hours from the candle boundary (next window boundary)
+      const candleBoundaryDate = new Date(data.candle_boundary);
+      const forecastExpiry = new Date(candleBoundaryDate.getTime() + 4 * 60 * 60 * 1000).toISOString();
+
+      // Determine quantile_table_version from the fingerprint normalisation metadata
+      const quantileTableVersion = data.fingerprint.normalisation?.quantile_table_version ?? '1.0.0';
+
+      const record: ResearchForecastRecord = {
+        fingerprint_id: data.fingerprint.fingerprint_id,
+        batch_id: data.batch_id,
+        asset: data.fingerprint.asset,
+        timeframe: data.fingerprint.timeframe,
+        forecast_timestamp: new Date().toISOString(),
+        forecast_expiry: forecastExpiry,
+        direction_probabilities: data.forecast.direction_probabilities,
+        expected_move_pips: data.forecast.expected_move_pips,
+        confidence_raw: data.confidence.confidence_raw,
+        confidence_final: data.confidence.confidence_final,
+        tradeability_placeholder: null,
+        engine_versions: data.engine_versions,
+        quantile_table_version: quantileTableVersion,
+        regime: data.fingerprint.regime,
+        sample_size: data.outcome.sample_size,
+        created_at: new Date().toISOString(),
+      };
+
+      await archiveWriter.persistForecast(record);
     },
   };
 }
@@ -233,6 +382,40 @@ async function main(): Promise<void> {
   if (hasFailure) {
     console.error('[BatchEntry] Batch pipeline completed with failures');
     process.exit(1);
+  }
+
+  // === Post-Pipeline Stage: Evaluation ===
+  // Evaluate PREVIOUSLY matured forecasts (forecast_expiry < NOW()).
+  // Runs in Batch_Layer only. Failures do NOT halt the batch.
+  try {
+    console.log('[BatchEntry] Starting post-pipeline evaluation stage');
+    const evaluationEngine = createEvaluationEngine(supabase);
+    const evalBatchId = crypto.randomUUID();
+
+    // Snapshot engine versions for trace metadata
+    const { data: evData } = await supabase
+      .from('engine_versions')
+      .select('engine_name, engine_version')
+      .eq('is_active', true)
+      .order('engine_name', { ascending: true });
+    const engineVersions: Record<string, string> = {};
+    for (const row of (evData ?? [])) {
+      engineVersions[row.engine_name as string] = row.engine_version as string;
+    }
+
+    const evaluations = await traceEngineExecution(
+      (input: { batchId: string }) => evaluationEngine.evaluateMaturedForecasts(input.batchId),
+      { batchId: evalBatchId },
+      {
+        engine_name: 'evaluation',
+        engine_version: engineVersions['evaluation'] ?? 'unknown',
+        batch_id: evalBatchId,
+      },
+      supabase,
+    );
+    console.log(`[BatchEntry] Evaluation stage complete: ${evaluations.length} evaluations produced (eval_batch_id=${evalBatchId})`);
+  } catch (evalError) {
+    console.error('[BatchEntry] Evaluation stage failed (non-fatal):', evalError);
   }
 
   console.log('[BatchEntry] Batch pipeline completed successfully');

@@ -69,7 +69,8 @@ export class VersionService {
     const { data, error } = await this.supabase
       .from('engine_versions')
       .select('engine_name, engine_version, quantile_table_version, fingerprint_schema_version, config, activated_at')
-      .eq('is_active', true);
+      .eq('is_active', true)
+      .order('engine_name', { ascending: true });
 
     if (error) {
       throw new Error(`[VersionService] Failed to load engine versions: ${error.message}`);

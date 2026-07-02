@@ -349,7 +349,7 @@ describe('IngestionService', () => {
     expect(result!.volume).toBe(1500);
     expect(result!.ingestion_time).toBeDefined();
     expect(mockSupabase.from).toHaveBeenCalledWith('raw_candles');
-    expect(mockInsert).toHaveBeenCalled();
+    expect(mockUpsert).toHaveBeenCalled();
   });
 
   it('snaps non-boundary timestamps to the grid', async () => {

@@ -163,18 +163,20 @@ function createMockSupabase(overrides: MockSupabaseOverrides = {}) {
     if (table === 'engine_versions') {
       return {
         select: vi.fn().mockReturnValue({
-          eq: vi.fn().mockResolvedValue(
-            overrides.engineVersionsSelect ?? {
-              data: [
-                { engine_name: 'fingerprint', engine_version: '2.1.0' },
-                { engine_name: 'similarity', engine_version: '1.3.0' },
-                { engine_name: 'outcome', engine_version: '1.2.0' },
-                { engine_name: 'forecast', engine_version: '1.1.0' },
-                { engine_name: 'confidence', engine_version: '1.0.0' },
-              ],
-              error: null,
-            }
-          ),
+          eq: vi.fn().mockReturnValue({
+            order: vi.fn().mockResolvedValue(
+              overrides.engineVersionsSelect ?? {
+                data: [
+                  { engine_name: 'fingerprint', engine_version: '2.1.0' },
+                  { engine_name: 'similarity', engine_version: '1.3.0' },
+                  { engine_name: 'outcome', engine_version: '1.2.0' },
+                  { engine_name: 'forecast', engine_version: '1.1.0' },
+                  { engine_name: 'confidence', engine_version: '1.0.0' },
+                ],
+                error: null,
+              }
+            ),
+          }),
         }),
       };
     }

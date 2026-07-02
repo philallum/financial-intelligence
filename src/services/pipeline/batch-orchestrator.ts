@@ -19,6 +19,7 @@ import { createClient, type SupabaseClient } from '@supabase/supabase-js';
 import { env } from '../../config/env.js';
 import { BATCH_TIMEOUT_MS } from '../../config/constants.js';
 import { BatchStatus } from '../../types/enums.js';
+import { traceEngineExecution } from '../observability/trace-emitter.js';
 import type {
   BatchRun,
   IngestionInput,
@@ -81,6 +82,24 @@ export interface StageHandlers {
   forecast: (input: ForecastInput) => Promise<Forecast>;
   confidence: (input: ConfidenceInput, fingerprintId: string) => Promise<ConfidenceOutput>;
   cache_write: (data: CacheWriteInput) => Promise<void>;
+  /** Optional topology handler. Executes after fingerprint, before similarity. Failure never halts pipeline. */
+  topology?: (fingerprintId: string, asset: string) => Promise<void>;
+  /** Optional regime v2 handler. Executes after fingerprint (and topology), before similarity. Failure never halts pipeline. */
+  regime_v2?: (fingerprint: Fingerprint) => Promise<void>;
+  /** Optional post-pipeline handler for research persistence. Failures are logged, never propagated. */
+  research_persist?: (data: ResearchPersistInput) => Promise<void>;
+}
+
+/** Input to the research persistence post-pipeline handler. */
+export interface ResearchPersistInput {
+  batch_id: string;
+  fingerprint: Fingerprint;
+  similarity: SimilarityOutput;
+  outcome: OutcomeDistribution;
+  forecast: Forecast;
+  confidence: ConfidenceOutput;
+  engine_versions: Record<string, string>;
+  candle_boundary: string;
 }
 
 /** Input to the cache write stage. */
@@ -174,7 +193,7 @@ export class BatchOrchestrator {
     await this.createBatchRecord(batchRun);
 
     // Execute pipeline with timeout
-    const result = await this.executeWithTimeout(input, batchId, startTime);
+    const result = await this.executeWithTimeout(input, batchId, startTime, engineVersions);
 
     // Update batch record based on result
     await this.updateBatchRecord(result);
@@ -215,7 +234,8 @@ export class BatchOrchestrator {
     const { data, error } = await this.supabase
       .from('engine_versions')
       .select('engine_name, engine_version')
-      .eq('is_active', true);
+      .eq('is_active', true)
+      .order('engine_name', { ascending: true });
 
     if (error || !data) {
       return {};
@@ -235,6 +255,7 @@ export class BatchOrchestrator {
     input: BatchTriggerInput,
     batchId: string,
     startTime: number,
+    engineVersions: Record<string, string>,
   ): Promise<PipelineResult> {
     return new Promise<PipelineResult>((resolve) => {
       const timeoutHandle = setTimeout(() => {
@@ -247,7 +268,7 @@ export class BatchOrchestrator {
         });
       }, this.timeoutMs);
 
-      this.executePipeline(input, batchId, startTime)
+      this.executePipeline(input, batchId, startTime, engineVersions)
         .then((result) => {
           clearTimeout(timeoutHandle);
           resolve(result);
@@ -268,22 +289,35 @@ export class BatchOrchestrator {
   /**
    * Execute all 7 pipeline stages sequentially.
    * On any stage failure, halt downstream and return failure result.
+   *
+   * Each stage handler is wrapped with `traceEngineExecution` to emit structured
+   * execution traces. Trace emission never interrupts the pipeline (Req 12.3).
    */
   private async executePipeline(
     input: BatchTriggerInput,
     batchId: string,
     startTime: number,
+    engineVersions: Record<string, string>,
   ): Promise<PipelineResult> {
     const completedStages: PipelineStage[] = [];
+
+    /** Helper: resolve engine version for a given stage name. */
+    const versionOf = (stage: string): string => engineVersions[stage] ?? 'unknown';
 
     // Stage 1: Ingestion
     let ingestionOutput: IngestionOutput;
     try {
-      const result = await this.handlers.ingestion({
+      const ingestionInput: IngestionInput = {
         asset: input.asset,
         timeframe: input.timeframe,
         candle_boundary: input.candle_boundary,
-      });
+      };
+      const result = await traceEngineExecution(
+        (inp: IngestionInput) => this.handlers.ingestion(inp),
+        ingestionInput,
+        { engine_name: 'ingestion', engine_version: versionOf('ingestion'), batch_id: batchId },
+        this.supabase,
+      );
       if (!result) {
         return this.buildFailureResult(batchId, 'ingestion', 'Ingestion returned null (all providers failed)', completedStages, startTime);
       }
@@ -296,22 +330,65 @@ export class BatchOrchestrator {
     // Stage 2: Fingerprint
     let fingerprint: Fingerprint;
     try {
-      fingerprint = await this.handlers.fingerprint({
+      const fingerprintInput: FingerprintInput = {
         asset: ingestionOutput.asset,
         timestamp_utc: ingestionOutput.timestamp_utc,
         ohlc: ingestionOutput.ohlc,
-      });
+      };
+      fingerprint = await traceEngineExecution(
+        (inp: FingerprintInput) => this.handlers.fingerprint(inp),
+        fingerprintInput,
+        { engine_name: 'fingerprint', engine_version: versionOf('fingerprint'), batch_id: batchId },
+        this.supabase,
+      );
       completedStages.push('fingerprint');
     } catch (error) {
       return this.buildFailureResult(batchId, 'fingerprint', error, completedStages, startTime);
     }
 
+    // Stage 2.5: Topology (optional, research-only — failure never halts pipeline)
+    if (this.handlers.topology) {
+      try {
+        await traceEngineExecution(
+          (inp: { fingerprintId: string; asset: string }) =>
+            this.handlers.topology!(inp.fingerprintId, inp.asset),
+          { fingerprintId: fingerprint.fingerprint_id, asset: input.asset },
+          { engine_name: 'topology', engine_version: versionOf('topology'), batch_id: batchId },
+          this.supabase,
+        );
+      } catch (error) {
+        console.error(
+          `[BatchOrchestrator] Topology stage failed (non-blocking): ${error instanceof Error ? error.message : String(error)}`,
+        );
+      }
+    }
+
+    // Stage 2.6: Regime v2 (optional, research-only — failure never halts pipeline)
+    if (this.handlers.regime_v2) {
+      try {
+        await traceEngineExecution(
+          (inp: { fingerprint: Fingerprint }) =>
+            this.handlers.regime_v2!(inp.fingerprint),
+          { fingerprint },
+          { engine_name: 'regime_v2', engine_version: versionOf('regime_v2'), batch_id: batchId },
+          this.supabase,
+        );
+      } catch (error) {
+        console.error(
+          `[BatchOrchestrator] Regime v2 stage failed (non-blocking): ${error instanceof Error ? error.message : String(error)}`,
+        );
+      }
+    }
+
     // Stage 3: Similarity
     let similarityOutput: SimilarityOutput;
     try {
-      similarityOutput = await this.handlers.similarity(
-        { query_fingerprint: fingerprint, top_n: 50 },
-        batchId,
+      const similarityInput: SimilarityInput = { query_fingerprint: fingerprint, top_n: 50 };
+      similarityOutput = await traceEngineExecution(
+        (inp: SimilarityInput) => this.handlers.similarity(inp, batchId),
+        similarityInput,
+        { engine_name: 'similarity', engine_version: versionOf('similarity'), batch_id: batchId },
+        this.supabase,
       );
       completedStages.push('similarity');
     } catch (error) {
@@ -322,10 +399,17 @@ export class BatchOrchestrator {
     let outcomeDistribution: OutcomeDistribution;
     try {
       const fingerprintIds = similarityOutput.matches.map((m) => m.match_fingerprint_id);
-      outcomeDistribution = await this.handlers.outcome(
-        { fingerprint_ids: fingerprintIds },
-        fingerprint.fingerprint_id,
-        batchId,
+      const outcomeInput: OutcomeInput = { fingerprint_ids: fingerprintIds };
+      outcomeDistribution = await traceEngineExecution(
+        (inp: OutcomeInput) => this.handlers.outcome(inp, fingerprint.fingerprint_id, batchId),
+        outcomeInput,
+        {
+          engine_name: 'outcome',
+          engine_version: versionOf('outcome'),
+          batch_id: batchId,
+          sample_size: fingerprintIds.length,
+        },
+        this.supabase,
       );
       completedStages.push('outcome');
     } catch (error) {
@@ -335,9 +419,18 @@ export class BatchOrchestrator {
     // Stage 5: Forecast
     let forecast: Forecast;
     try {
-      forecast = await this.handlers.forecast({
-        outcome_distribution: outcomeDistribution,
-      });
+      const forecastInput: ForecastInput = { outcome_distribution: outcomeDistribution };
+      forecast = await traceEngineExecution(
+        (inp: ForecastInput) => this.handlers.forecast(inp),
+        forecastInput,
+        {
+          engine_name: 'forecast',
+          engine_version: versionOf('forecast'),
+          batch_id: batchId,
+          sample_size: outcomeDistribution.sample_size,
+        },
+        this.supabase,
+      );
       completedStages.push('forecast');
     } catch (error) {
       return this.buildFailureResult(batchId, 'forecast', error, completedStages, startTime);
@@ -346,25 +439,33 @@ export class BatchOrchestrator {
     // Stage 6: Confidence
     let confidenceOutput: ConfidenceOutput;
     try {
-      confidenceOutput = await this.handlers.confidence(
-        {
-          up_probability: outcomeDistribution.direction_probability.up,
-          down_probability: outcomeDistribution.direction_probability.down,
-          flat_probability: outcomeDistribution.direction_probability.flat,
-          sample_size: outcomeDistribution.sample_size,
-          variance: outcomeDistribution.volatility_profile.std_dev,
-          skew: 0, // Derived from distribution shape — placeholder
-          kurtosis: 0, // Derived from distribution shape — placeholder
-          mean_similarity: 0.8, // Derived from similarity matches — placeholder
-          similarity_spread: 0.2, // Derived from similarity matches — placeholder
-          top_match_density: 0.7, // Derived from similarity matches — placeholder
-          regime_metadata: {
-            regime_match_ratio: outcomeDistribution.confidence_inputs.regime_consistency,
-            dominant_regime: 'NORMAL_RANGING',
-            regime_diversity: 1 - outcomeDistribution.confidence_inputs.regime_consistency,
-          },
+      const confidenceInput: ConfidenceInput = {
+        up_probability: outcomeDistribution.direction_probability.up,
+        down_probability: outcomeDistribution.direction_probability.down,
+        flat_probability: outcomeDistribution.direction_probability.flat,
+        sample_size: outcomeDistribution.sample_size,
+        variance: outcomeDistribution.volatility_profile.std_dev,
+        skew: 0, // Derived from distribution shape — placeholder
+        kurtosis: 0, // Derived from distribution shape — placeholder
+        mean_similarity: 0.8, // Derived from similarity matches — placeholder
+        similarity_spread: 0.2, // Derived from similarity matches — placeholder
+        top_match_density: 0.7, // Derived from similarity matches — placeholder
+        regime_metadata: {
+          regime_match_ratio: outcomeDistribution.confidence_inputs.regime_consistency,
+          dominant_regime: 'NORMAL_RANGING',
+          regime_diversity: 1 - outcomeDistribution.confidence_inputs.regime_consistency,
         },
-        fingerprint.fingerprint_id,
+      };
+      confidenceOutput = await traceEngineExecution(
+        (inp: ConfidenceInput) => this.handlers.confidence(inp, fingerprint.fingerprint_id),
+        confidenceInput,
+        {
+          engine_name: 'confidence',
+          engine_version: versionOf('confidence'),
+          batch_id: batchId,
+          sample_size: outcomeDistribution.sample_size,
+        },
+        this.supabase,
       );
       completedStages.push('confidence');
     } catch (error) {
@@ -373,20 +474,51 @@ export class BatchOrchestrator {
 
     // Stage 7: Cache Write
     try {
-      await this.handlers.cache_write({
+      const cacheWriteInput: CacheWriteInput = {
         batch_id: batchId,
         fingerprint,
         similarity: similarityOutput,
         outcome: outcomeDistribution,
         forecast,
         confidence: confidenceOutput,
-      });
+      };
+      await traceEngineExecution(
+        (inp: CacheWriteInput) => this.handlers.cache_write(inp),
+        cacheWriteInput,
+        { engine_name: 'cache_write', engine_version: versionOf('cache_write'), batch_id: batchId },
+        this.supabase,
+      );
       completedStages.push('cache_write');
     } catch (error) {
       return this.buildFailureResult(batchId, 'cache_write', error, completedStages, startTime);
     }
 
     // All 7 stages succeeded
+
+    // Post-pipeline: Research persistence (fire-and-forget, never halts batch)
+    if (this.handlers.research_persist) {
+      const researchInput: ResearchPersistInput = {
+        batch_id: batchId,
+        fingerprint,
+        similarity: similarityOutput,
+        outcome: outcomeDistribution,
+        forecast,
+        confidence: confidenceOutput,
+        engine_versions: engineVersions,
+        candle_boundary: input.candle_boundary,
+      };
+      traceEngineExecution(
+        (inp: ResearchPersistInput) => this.handlers.research_persist!(inp),
+        researchInput,
+        { engine_name: 'research_persist', engine_version: versionOf('research_persist'), batch_id: batchId },
+        this.supabase,
+      ).catch((err) => {
+        console.error(
+          `[BatchOrchestrator] Research persistence failed (non-blocking): ${err instanceof Error ? err.message : String(err)}`,
+        );
+      });
+    }
+
     return {
       batch_id: batchId,
       status: BatchStatus.COMPLETED,

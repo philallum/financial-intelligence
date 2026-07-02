@@ -21,6 +21,9 @@ import type {
   OHLC,
   MacroContext,
   RegimeClassification,
+  ExtendedMarketFeatures,
+  ExtendedFeaturesConfig,
+  ExtendedFeaturesInput,
 } from "../types/index.js";
 import type { VolatilityRegime, TrendRegime, Session } from "../types/enums.js";
 
@@ -28,7 +31,7 @@ import type { VolatilityRegime, TrendRegime, Session } from "../types/enums.js";
 // Constants
 // =============================================================================
 
-const MARKET_STATE_VERSION = "1.0.0";
+const MARKET_STATE_VERSION = "1.1.0";
 const QUANTILE_TABLE_VERSION = "v1_0";
 const SCALING_METHOD = "fixed";
 const TIMEFRAME = "4H";
@@ -572,6 +575,401 @@ export function computeL5SentimentPressure(
   ];
 
   return vector.map((v) => clamp(roundToPrecision(v, 6), 0, 1));
+}
+
+// =============================================================================
+// Extended Market Features (Phase 7 — Rich Market Context)
+// =============================================================================
+
+/**
+ * Neutral default value for scalar extended features when data is missing.
+ * Requirement 14.3: Missing data → substitute 0.5 (neutral default).
+ */
+const NEUTRAL_DEFAULT = 0.5;
+
+/**
+ * Maximum candle lookback for rolling_trend computation.
+ * Requirement 14.1, 14.4: from 50 most recent candles.
+ */
+const ROLLING_TREND_MAX_CANDLES = 50;
+
+/**
+ * Compute extended market features based on the provided input and config.
+ *
+ * This is a pure, deterministic function — no side effects, no randomness.
+ * Each feature is independently enableable via the config parameter.
+ * Missing data defaults to 0.5 (neutral). All values rounded to 6 decimal places.
+ *
+ * Requirements: 14.1, 14.2, 14.3, 14.4, 14.5, 14.6, 14.7
+ *
+ * @param input - The data needed to compute extended features
+ * @param config - Which features to compute (true = enabled)
+ * @returns ExtendedMarketFeatures with only the enabled features populated
+ */
+export function computeExtendedFeatures(
+  input: ExtendedFeaturesInput,
+  config: ExtendedFeaturesConfig,
+): ExtendedMarketFeatures {
+  const result: ExtendedMarketFeatures = {};
+
+  if (config.rolling_trend) {
+    result.rolling_trend = computeRollingTrend(input.historical_candles);
+  }
+
+  if (config.atr_percentile) {
+    result.atr_percentile = computeAtrPercentile(input.historical_candles);
+  }
+
+  if (config.volatility_regime_score) {
+    result.volatility_regime_score = computeVolatilityRegimeScore(input.historical_candles);
+  }
+
+  if (config.session_statistics) {
+    result.session_statistics = computeSessionStatistics(input.historical_candles, input.timestamp_utc);
+  }
+
+  if (config.correlated_markets) {
+    result.correlated_markets = computeCorrelatedMarkets(input.correlated_markets_data);
+  }
+
+  if (config.economic_calendar_summary) {
+    result.economic_calendar_summary = computeEconomicCalendarSummary(input.economic_calendar_data);
+  }
+
+  if (config.macro_state) {
+    result.macro_state = computeMacroState(input.macro_context);
+  }
+
+  if (config.sentiment_summary) {
+    result.sentiment_summary = computeSentimentSummary(input.macro_context);
+  }
+
+  return result;
+}
+
+/**
+ * Compute rolling_trend from historical candles.
+ * Normalised to [0, 1]: 0 = strong downtrend, 0.5 = flat, 1 = strong uptrend.
+ * Uses up to 50 candles; if fewer are available, computes with available candles.
+ *
+ * Requirement 14.4: If fewer than 50 candles, compute with available, record count.
+ */
+function computeRollingTrend(candles?: OHLC[]): number {
+  if (!candles || candles.length === 0) {
+    return NEUTRAL_DEFAULT;
+  }
+
+  // Use up to ROLLING_TREND_MAX_CANDLES most recent candles
+  const relevantCandles = candles.slice(-ROLLING_TREND_MAX_CANDLES);
+  const n = relevantCandles.length;
+
+  if (n === 1) {
+    // With only one candle, determine trend from close vs open
+    const singleReturn = relevantCandles[0].close - relevantCandles[0].open;
+    // Normalise: use sigmoid-like mapping, capped reference of 50 pips
+    const pips = singleReturn / PIP_DIVISOR;
+    return roundToPrecision(clamp(sigmoid(pips / 25), 0, 1), 6);
+  }
+
+  // Compute linear regression slope over close prices using least squares
+  // x = 0, 1, 2, ..., n-1 (candle index)
+  // y = close prices
+  let sumX = 0;
+  let sumY = 0;
+  let sumXY = 0;
+  let sumX2 = 0;
+
+  for (let i = 0; i < n; i++) {
+    const y = relevantCandles[i].close;
+    sumX += i;
+    sumY += y;
+    sumXY += i * y;
+    sumX2 += i * i;
+  }
+
+  const denominator = n * sumX2 - sumX * sumX;
+  if (denominator === 0) {
+    return NEUTRAL_DEFAULT;
+  }
+
+  const slope = (n * sumXY - sumX * sumY) / denominator;
+
+  // Normalise slope to [0, 1] using sigmoid
+  // Scale by pip reference: a slope of 0.0001 per candle ≈ 1 pip per candle
+  const slopeInPips = slope / PIP_DIVISOR;
+  // Use sigmoid mapping: +/-5 pips/candle maps to near 0 or 1
+  const normalised = sigmoid(slopeInPips / 2.5);
+
+  return roundToPrecision(clamp(normalised, 0, 1), 6);
+}
+
+/**
+ * Compute ATR percentile from historical candles.
+ * The current candle's range is ranked relative to historical ranges.
+ * Normalised to [0, 1]: 0 = lowest range in history, 1 = highest.
+ *
+ * Requirement 14.1: atr_percentile normalised to [0.0, 1.0].
+ */
+function computeAtrPercentile(candles?: OHLC[]): number {
+  if (!candles || candles.length === 0) {
+    return NEUTRAL_DEFAULT;
+  }
+
+  const relevantCandles = candles.slice(-ROLLING_TREND_MAX_CANDLES);
+  const n = relevantCandles.length;
+
+  if (n === 1) {
+    // With only one candle, no percentile context — return neutral
+    return NEUTRAL_DEFAULT;
+  }
+
+  // Current candle is the last one
+  const currentRange = relevantCandles[n - 1].high - relevantCandles[n - 1].low;
+
+  // Compute all ranges
+  const ranges: number[] = [];
+  for (let i = 0; i < n; i++) {
+    ranges.push(relevantCandles[i].high - relevantCandles[i].low);
+  }
+
+  // Sort ranges ascending for percentile ranking
+  const sortedRanges = [...ranges].sort((a, b) => a - b);
+
+  // Count how many ranges are strictly less than current
+  let countBelow = 0;
+  for (let i = 0; i < sortedRanges.length; i++) {
+    if (sortedRanges[i] < currentRange) {
+      countBelow++;
+    }
+  }
+
+  // Percentile = count_below / (n - 1) to normalise to [0, 1]
+  const percentile = n > 1 ? countBelow / (n - 1) : NEUTRAL_DEFAULT;
+
+  return roundToPrecision(clamp(percentile, 0, 1), 6);
+}
+
+/**
+ * Compute volatility regime score from historical candles.
+ * Normalised [0, 1]: 0 = very low volatility, 1 = very high volatility.
+ * Based on current ATR relative to a rolling window.
+ *
+ * Requirement 14.1: volatility_regime_score normalised to [0.0, 1.0].
+ */
+function computeVolatilityRegimeScore(candles?: OHLC[]): number {
+  if (!candles || candles.length === 0) {
+    return NEUTRAL_DEFAULT;
+  }
+
+  const relevantCandles = candles.slice(-ROLLING_TREND_MAX_CANDLES);
+  const n = relevantCandles.length;
+
+  // Compute average true range of all candles in the window
+  let totalRange = 0;
+  for (let i = 0; i < n; i++) {
+    totalRange += relevantCandles[i].high - relevantCandles[i].low;
+  }
+  const avgRange = totalRange / n;
+
+  // Current candle's range
+  const currentRange = relevantCandles[n - 1].high - relevantCandles[n - 1].low;
+
+  if (avgRange === 0) {
+    return NEUTRAL_DEFAULT;
+  }
+
+  // Ratio of current range to average range
+  // A ratio of 1.0 = normal, >2 = high, <0.5 = low
+  const ratio = currentRange / avgRange;
+
+  // Normalise using sigmoid: ratio of 1 → 0.5, ratio of 2 → ~0.73, ratio of 0.5 → ~0.27
+  const normalised = sigmoid((ratio - 1) * 2);
+
+  return roundToPrecision(clamp(normalised, 0, 1), 6);
+}
+
+/**
+ * Compute session statistics: count and average range per trading session.
+ * Sessions: ASIA (20:00-04:00 UTC), LONDON (04:00-12:00 UTC), NY (12:00-20:00 UTC).
+ *
+ * Requirement 14.1: session_statistics (candle count and average range per session).
+ */
+function computeSessionStatistics(
+  candles?: OHLC[],
+  timestamp_utc?: string,
+): ExtendedMarketFeatures["session_statistics"] {
+  const defaultStats = {
+    asia: { count: 0, avg_range: roundToPrecision(NEUTRAL_DEFAULT, 6) },
+    london: { count: 0, avg_range: roundToPrecision(NEUTRAL_DEFAULT, 6) },
+    ny: { count: 0, avg_range: roundToPrecision(NEUTRAL_DEFAULT, 6) },
+  };
+
+  if (!candles || candles.length === 0 || !timestamp_utc) {
+    return defaultStats;
+  }
+
+  const relevantCandles = candles.slice(-ROLLING_TREND_MAX_CANDLES);
+  const n = relevantCandles.length;
+
+  // We need timestamps for session classification. Since we only have OHLC data,
+  // we infer session assignment by distributing candles backwards from the timestamp_utc
+  // at 4H intervals (deterministic reconstruction).
+  const baseDate = new Date(timestamp_utc);
+  const sessions: { asia: number[]; london: number[]; ny: number[] } = {
+    asia: [],
+    london: [],
+    ny: [],
+  };
+
+  for (let i = 0; i < n; i++) {
+    // Compute timestamp for candle at position i (i=n-1 is the most recent / current)
+    const offsetMs = (n - 1 - i) * 4 * 60 * 60 * 1000;
+    const candleTime = new Date(baseDate.getTime() - offsetMs);
+    const hour = candleTime.getUTCHours();
+
+    const range = relevantCandles[i].high - relevantCandles[i].low;
+    const rangePips = range / PIP_DIVISOR;
+
+    if (hour >= 4 && hour < 12) {
+      sessions.london.push(rangePips);
+    } else if (hour >= 12 && hour < 20) {
+      sessions.ny.push(rangePips);
+    } else {
+      sessions.asia.push(rangePips);
+    }
+  }
+
+  const computeAvg = (arr: number[]): number => {
+    if (arr.length === 0) return NEUTRAL_DEFAULT;
+    const sum = arr.reduce((a, b) => a + b, 0);
+    return sum / arr.length;
+  };
+
+  return {
+    asia: {
+      count: sessions.asia.length,
+      avg_range: roundToPrecision(computeAvg(sessions.asia), 6),
+    },
+    london: {
+      count: sessions.london.length,
+      avg_range: roundToPrecision(computeAvg(sessions.london), 6),
+    },
+    ny: {
+      count: sessions.ny.length,
+      avg_range: roundToPrecision(computeAvg(sessions.ny), 6),
+    },
+  };
+}
+
+/**
+ * Compute correlated markets alignment scores.
+ * If data is missing, each instrument receives the neutral default (0.5).
+ *
+ * Requirement 14.1: correlated_markets (alignment scores for up to 5 instruments, each [0, 1]).
+ * Requirement 14.3: Missing data → substitute 0.5.
+ */
+function computeCorrelatedMarkets(
+  data?: Record<string, number>,
+): Record<string, number> {
+  if (!data || Object.keys(data).length === 0) {
+    return {};
+  }
+
+  const result: Record<string, number> = {};
+
+  // Process up to 5 correlated instruments, sorted by key for determinism
+  const sortedKeys = Object.keys(data).sort().slice(0, 5);
+
+  for (const key of sortedKeys) {
+    const value = data[key];
+    if (value === null || value === undefined || isNaN(value)) {
+      result[key] = NEUTRAL_DEFAULT;
+    } else {
+      result[key] = roundToPrecision(clamp(value, 0, 1), 6);
+    }
+  }
+
+  return result;
+}
+
+/**
+ * Compute economic calendar summary.
+ * If data is missing, returns neutral defaults.
+ *
+ * Requirement 14.1: economic_calendar_summary (binary high-impact event flag, hours-to-next-event).
+ * Requirement 14.3: Missing data → substitute neutral.
+ */
+function computeEconomicCalendarSummary(
+  data?: { high_impact_event: boolean; hours_to_next_event: number },
+): ExtendedMarketFeatures["economic_calendar_summary"] {
+  if (!data) {
+    return {
+      high_impact_event: false,
+      hours_to_next_event: roundToPrecision(24, 6),
+    };
+  }
+
+  return {
+    high_impact_event: data.high_impact_event,
+    hours_to_next_event: roundToPrecision(Math.max(0, data.hours_to_next_event), 6),
+  };
+}
+
+/**
+ * Compute composite macro state from macro context.
+ * Normalised [0, 1]: composite of all available macro indicators.
+ *
+ * Requirement 14.1: macro_state (composite of MacroContext fields normalised to [0, 1]).
+ * Requirement 14.3: Missing data → 0.5.
+ */
+function computeMacroState(macroContext?: MacroContext): number {
+  if (!macroContext) {
+    return NEUTRAL_DEFAULT;
+  }
+
+  const { dxy, vix, spx, us10y, gold } = macroContext;
+
+  // Normalise each field using the same fixed ranges as L4
+  const dxyNorm = dxy !== null ? clamp((dxy - 90) / 20, 0, 1) : NEUTRAL_DEFAULT;
+  const vixNorm = vix !== null ? clamp((vix - 10) / 30, 0, 1) : NEUTRAL_DEFAULT;
+  const spxNorm = spx !== null ? clamp((spx - 3000) / 2500, 0, 1) : NEUTRAL_DEFAULT;
+  const us10yNorm = us10y !== null ? clamp((us10y - 1) / 4, 0, 1) : NEUTRAL_DEFAULT;
+  const goldNorm = gold !== null ? clamp((gold - 1500) / 1000, 0, 1) : NEUTRAL_DEFAULT;
+
+  // Composite: equal-weighted average of all normalised macro indicators
+  const composite = (dxyNorm + vixNorm + spxNorm + us10yNorm + goldNorm) / 5;
+
+  return roundToPrecision(clamp(composite, 0, 1), 6);
+}
+
+/**
+ * Compute composite sentiment summary from macro context.
+ * Normalised [0, 1]: composite sentiment derived from VIX, gold, SPX signals.
+ *
+ * Requirement 14.1: sentiment_summary (composite sentiment score normalised to [0, 1]).
+ * Requirement 14.3: Missing data → 0.5.
+ */
+function computeSentimentSummary(macroContext?: MacroContext): number {
+  if (!macroContext) {
+    return NEUTRAL_DEFAULT;
+  }
+
+  const { vix, gold, spx, us10y } = macroContext;
+
+  // Fear index from VIX
+  const fearIndex = vix !== null ? clamp((vix - 10) / 30, 0, 1) : NEUTRAL_DEFAULT;
+  // Gold as safe haven proxy
+  const goldProxy = gold !== null ? clamp((gold - 1500) / 1000, 0, 1) : NEUTRAL_DEFAULT;
+  // Equity risk appetite from SPX
+  const equityAppetite = spx !== null ? clamp((spx - 3000) / 2500, 0, 1) : NEUTRAL_DEFAULT;
+  // Bond stress from yields
+  const bondStress = us10y !== null ? clamp((us10y - 1) / 4, 0, 1) : NEUTRAL_DEFAULT;
+
+  // Composite: risk-off signals (fear, gold safe haven, bond stress) vs risk-on (equity)
+  // Higher value = more risk-off sentiment
+  const composite = (fearIndex + goldProxy + bondStress + (1 - equityAppetite)) / 4;
+
+  return roundToPrecision(clamp(composite, 0, 1), 6);
 }
 
 // =============================================================================
