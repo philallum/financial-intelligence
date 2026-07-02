@@ -7,6 +7,7 @@
 
 export * from "./enums.js";
 export * from "./config.js";
+export * from "./entities.js";
 
 import type {
   VolatilityRegime,

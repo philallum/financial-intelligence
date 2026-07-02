@@ -48,13 +48,6 @@ const MODE_ACCESS: Record<CustomerTier, readonly ResponseMode[]> = {
     ResponseMode.RAW,
     ResponseMode.RESEARCH,
   ],
-  [CustomerTier.INTEGRATOR]: [
-    ResponseMode.FORECAST,
-    ResponseMode.TRADE,
-    ResponseMode.EXPLAIN,
-    ResponseMode.RAW,
-    ResponseMode.RESEARCH,
-  ],
   [CustomerTier.INTERNAL]: [
     ResponseMode.FORECAST,
     ResponseMode.TRADE,

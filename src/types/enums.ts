@@ -48,10 +48,32 @@ export const CustomerTier = {
   RETAIL: "RETAIL",
   DEVELOPER: "DEVELOPER",
   RESEARCH: "RESEARCH",
-  INTEGRATOR: "INTEGRATOR",
   INTERNAL: "INTERNAL",
 } as const;
 export type CustomerTier = (typeof CustomerTier)[keyof typeof CustomerTier];
+
+// --- Subscription Plans ---
+
+export const SubscriptionPlan = {
+  FREE: "FREE",
+  STARTER: "STARTER",
+  PROFESSIONAL: "PROFESSIONAL",
+  ENTERPRISE: "ENTERPRISE",
+} as const;
+export type SubscriptionPlan =
+  (typeof SubscriptionPlan)[keyof typeof SubscriptionPlan];
+
+// --- RapidAPI Subscription Tiers ---
+
+export const RapidApiSubscription = {
+  BASIC: "BASIC",
+  PRO: "PRO",
+  ULTRA: "ULTRA",
+  MEGA: "MEGA",
+  CUSTOM: "CUSTOM",
+} as const;
+export type RapidApiSubscription =
+  (typeof RapidApiSubscription)[keyof typeof RapidApiSubscription];
 
 // --- Tradeability Labels ---
 
