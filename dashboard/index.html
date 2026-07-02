@@ -6,125 +6,336 @@
   <title>Financial Intelligence Platform</title>
   <style>
     * { margin: 0; padding: 0; box-sizing: border-box; }
-    body { font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif; background: #0f1419; color: #e7e9ea; padding: 2rem; }
-    h1 { font-size: 1.4rem; margin-bottom: 1.5rem; color: #8b98a5; font-weight: 400; }
-    .card { background: #1a1f25; border: 1px solid #2f3336; border-radius: 12px; padding: 1.5rem; margin-bottom: 1rem; }
-    .card h2 { font-size: 0.85rem; text-transform: uppercase; letter-spacing: 0.05em; color: #8b98a5; margin-bottom: 1rem; }
+    body { font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif; background: #0f1419; color: #e7e9ea; padding: 2rem; max-width: 1400px; margin: 0 auto; }
+    h1 { font-size: 1.4rem; margin-bottom: 0.5rem; color: #e7e9ea; font-weight: 500; }
+    .subtitle { font-size: 0.8rem; color: #8b98a5; margin-bottom: 1.5rem; }
+    .grid { display: grid; grid-template-columns: 1fr 1fr; gap: 1rem; }
+    .grid-full { grid-column: 1 / -1; }
+    @media (max-width: 900px) { .grid { grid-template-columns: 1fr; } }
+    .card { background: #1a1f25; border: 1px solid #2f3336; border-radius: 12px; padding: 1.5rem; }
+    .card h2 { font-size: 0.8rem; text-transform: uppercase; letter-spacing: 0.05em; color: #8b98a5; margin-bottom: 1rem; display: flex; align-items: center; gap: 0.5rem; }
+    .card h2 .dot { width: 6px; height: 6px; border-radius: 50%; background: #00c853; }
+    .card h2 .dot.error { background: #ff1744; }
     .asset { font-size: 1.8rem; font-weight: 600; margin-bottom: 0.5rem; }
     .direction { display: flex; gap: 1.5rem; margin: 1rem 0; }
     .dir-item { text-align: center; }
-    .dir-item .label { font-size: 0.75rem; color: #8b98a5; margin-bottom: 0.25rem; }
+    .dir-item .label { font-size: 0.7rem; color: #8b98a5; margin-bottom: 0.25rem; }
     .dir-item .value { font-size: 1.6rem; font-weight: 600; }
     .dir-item.up .value { color: #00c853; }
     .dir-item.down .value { color: #ff1744; }
     .dir-item.flat .value { color: #ffab00; }
-    .metrics { display: grid; grid-template-columns: repeat(auto-fit, minmax(140px, 1fr)); gap: 1rem; margin-top: 1rem; }
-    .metric { padding: 0.75rem; background: #0f1419; border-radius: 8px; }
-    .metric .label { font-size: 0.7rem; color: #8b98a5; text-transform: uppercase; letter-spacing: 0.03em; }
-    .metric .value { font-size: 1.1rem; font-weight: 500; margin-top: 0.25rem; }
-    .badge { display: inline-block; padding: 0.2rem 0.6rem; border-radius: 4px; font-size: 0.75rem; font-weight: 600; }
+    .metrics { display: grid; grid-template-columns: repeat(auto-fit, minmax(120px, 1fr)); gap: 0.75rem; margin-top: 1rem; }
+    .metric { padding: 0.6rem; background: #0f1419; border-radius: 8px; }
+    .metric .label { font-size: 0.65rem; color: #8b98a5; text-transform: uppercase; letter-spacing: 0.03em; }
+    .metric .value { font-size: 1rem; font-weight: 500; margin-top: 0.2rem; }
+    .badge { display: inline-block; padding: 0.15rem 0.5rem; border-radius: 4px; font-size: 0.7rem; font-weight: 600; }
     .badge-go { background: #00c85320; color: #00c853; }
     .badge-conditional { background: #ffab0020; color: #ffab00; }
     .badge-no_go { background: #ff174420; color: #ff1744; }
-    .valid-until { font-size: 0.8rem; color: #8b98a5; margin-top: 1rem; }
-    .status { font-size: 0.8rem; color: #8b98a5; margin-bottom: 1rem; }
+    .badge-success { background: #00c85320; color: #00c853; }
+    .badge-error { background: #ff174420; color: #ff1744; }
+    .valid-until { font-size: 0.75rem; color: #8b98a5; margin-top: 0.75rem; }
     .error { color: #ff1744; }
     #loading { color: #8b98a5; }
-    .config { margin-bottom: 1.5rem; display: flex; align-items: center; gap: 0.75rem; }
-    .config input { background: #1a1f25; border: 1px solid #2f3336; border-radius: 6px; padding: 0.5rem 0.75rem; color: #e7e9ea; font-size: 0.85rem; width: 320px; }
-    .config button { background: #1d9bf0; color: white; border: none; border-radius: 6px; padding: 0.5rem 1rem; cursor: pointer; font-size: 0.85rem; }
+    .config { margin-bottom: 1.5rem; display: flex; align-items: center; gap: 0.75rem; flex-wrap: wrap; }
+    .config input { background: #1a1f25; border: 1px solid #2f3336; border-radius: 6px; padding: 0.5rem 0.75rem; color: #e7e9ea; font-size: 0.8rem; width: 280px; }
+    .config button { background: #1d9bf0; color: white; border: none; border-radius: 6px; padding: 0.5rem 1rem; cursor: pointer; font-size: 0.8rem; }
     .config button:hover { background: #1a8cd8; }
+    .config .sep { color: #2f3336; }
+
+    /* Similarity table */
+    .sim-table { width: 100%; border-collapse: collapse; font-size: 0.75rem; }
+    .sim-table th { text-align: left; color: #8b98a5; font-weight: 500; padding: 0.4rem 0.6rem; border-bottom: 1px solid #2f3336; text-transform: uppercase; font-size: 0.65rem; letter-spacing: 0.03em; }
+    .sim-table td { padding: 0.4rem 0.6rem; border-bottom: 1px solid #1a1f25; }
+    .sim-table tr:hover td { background: #0f1419; }
+    .score-bar { height: 4px; border-radius: 2px; background: #2f3336; position: relative; width: 60px; display: inline-block; vertical-align: middle; }
+    .score-bar-fill { height: 100%; border-radius: 2px; background: #1d9bf0; }
+    .layer-scores { display: flex; gap: 0.3rem; }
+    .layer-dot { width: 8px; height: 8px; border-radius: 2px; display: inline-block; }
+
+    /* Trace timeline */
+    .trace-timeline { display: flex; flex-direction: column; gap: 0.4rem; }
+    .trace-item { display: flex; align-items: center; gap: 0.75rem; padding: 0.4rem 0.6rem; background: #0f1419; border-radius: 6px; font-size: 0.75rem; }
+    .trace-item .name { width: 120px; font-weight: 500; }
+    .trace-item .version { color: #8b98a5; width: 50px; }
+    .trace-item .duration-bar { flex: 1; height: 6px; background: #2f3336; border-radius: 3px; position: relative; }
+    .trace-item .duration-fill { height: 100%; border-radius: 3px; background: #1d9bf0; }
+    .trace-item .duration-label { width: 55px; text-align: right; color: #8b98a5; font-size: 0.7rem; }
+    .trace-item .status-dot { width: 6px; height: 6px; border-radius: 50%; }
+    .trace-item .status-dot.success { background: #00c853; }
+    .trace-item .status-dot.error { background: #ff1744; }
+
+    /* Regime card */
+    .regime-tags { display: flex; flex-wrap: wrap; gap: 0.5rem; margin-top: 0.5rem; }
+    .regime-tag { padding: 0.3rem 0.7rem; background: #0f1419; border: 1px solid #2f3336; border-radius: 6px; font-size: 0.75rem; }
+    .regime-tag.active { border-color: #1d9bf0; color: #1d9bf0; }
+
+    /* Research archive history */
+    .history-list { display: flex; flex-direction: column; gap: 0.5rem; }
+    .history-item { display: flex; align-items: center; gap: 1rem; padding: 0.5rem 0.6rem; background: #0f1419; border-radius: 6px; font-size: 0.75rem; }
+    .history-item .time { width: 130px; color: #8b98a5; }
+    .history-item .dir { display: flex; gap: 0.4rem; }
+    .history-item .dir span { padding: 0.1rem 0.4rem; border-radius: 3px; font-size: 0.7rem; font-weight: 600; }
+    .history-item .move { width: 70px; text-align: right; }
+    .history-item .conf { width: 50px; text-align: right; color: #8b98a5; }
   </style>
 </head>
 <body>
   <h1>Financial Intelligence Platform</h1>
+  <div class="subtitle">Deterministic Financial Research · EUR/USD 4H</div>
 
   <div class="config">
     <input id="api-url" type="text" placeholder="API URL" value="https://financial-intelligence-api-517029156879.europe-west1.run.app">
-    <button onclick="fetchForecast()">Refresh</button>
+    <span class="sep">|</span>
+    <input id="supabase-url" type="text" placeholder="Supabase URL" value="https://vzfamclwlbxonabvhcve.supabase.co">
+    <button onclick="refreshAll()">Refresh All</button>
   </div>
 
-  <div id="content">
-    <p id="loading">Loading forecast...</p>
+  <div class="grid" id="content">
+    <p id="loading">Loading...</p>
   </div>
 
   <script>
-    async function fetchForecast() {
-      const baseUrl = document.getElementById('api-url').value.replace(/\/$/, '');
-      const content = document.getElementById('content');
+    // Supabase anon key (publishable, safe to expose in client code — RLS enforced)
+    const SUPABASE_ANON_KEY = 'sb_publishable_LpljDfNLU5cmIjFB2mu-gg_Ve5S6zkL';
 
-      content.innerHTML = '<p id="loading">Loading...</p>';
+    async function supabaseQuery(table, params = '') {
+      const baseUrl = document.getElementById('supabase-url').value.replace(/\/$/, '');
+      const url = `${baseUrl}/rest/v1/${table}?${params}`;
+      const res = await fetch(url, {
+        headers: {
+          'apikey': SUPABASE_ANON_KEY,
+          'Authorization': `Bearer ${SUPABASE_ANON_KEY}`,
+        }
+      });
+      return res.json();
+    }
+
+    async function refreshAll() {
+      const content = document.getElementById('content');
+      content.innerHTML = '<p id="loading" class="grid-full">Loading...</p>';
 
       try {
-        const res = await fetch(`${baseUrl}/v1/forecast/EURUSD`);
-        const data = await res.json();
+        const [forecast, researchForecasts, similarity, traces] = await Promise.all([
+          fetchForecastData(),
+          supabaseQuery('research_forecasts', 'select=fingerprint_id,asset,confidence_final,sample_size,created_at,direction_probabilities,expected_move_pips,regime,engine_versions&order=created_at.desc&limit=10'),
+          supabaseQuery('research_similarity_archive', 'select=match_fingerprint_id,similarity_score,rank,layer_breakdown,match_explanation&order=rank.asc&limit=10'),
+          supabaseQuery('execution_traces', 'select=engine_name,engine_version,status,execution_time_ms,timestamp_utc&order=timestamp_utc.desc&limit=12'),
+        ]);
 
-        if (!res.ok) {
-          content.innerHTML = `<div class="card"><p class="error">Error: ${data.message || data.error || 'Unknown error'}</p></div>`;
-          return;
-        }
+        let html = '';
 
-        const dp = data.direction_probabilities;
-        const label = data.tradeability_label || 'NO_GO';
-        const badgeClass = `badge-${label.toLowerCase()}`;
+        // 1. Current Forecast Card
+        html += renderForecastCard(forecast);
 
-        content.innerHTML = `
-          <div class="card">
-            <h2>Current Forecast</h2>
-            <div class="asset">EUR/USD</div>
-            <div class="direction">
-              <div class="dir-item up">
-                <div class="label">UP</div>
-                <div class="value">${(dp.up * 100).toFixed(0)}%</div>
-              </div>
-              <div class="dir-item down">
-                <div class="label">DOWN</div>
-                <div class="value">${(dp.down * 100).toFixed(0)}%</div>
-              </div>
-              <div class="dir-item flat">
-                <div class="label">FLAT</div>
-                <div class="value">${(dp.flat * 100).toFixed(0)}%</div>
-              </div>
-            </div>
-            <div class="metrics">
-              <div class="metric">
-                <div class="label">Expected Move</div>
-                <div class="value">${data.expected_move_pips} pips</div>
-              </div>
-              <div class="metric">
-                <div class="label">Confidence</div>
-                <div class="value">${(data.confidence_final * 100).toFixed(1)}%</div>
-              </div>
-              <div class="metric">
-                <div class="label">Tradeability</div>
-                <div class="value"><span class="badge ${badgeClass}">${label}</span></div>
-              </div>
-              <div class="metric">
-                <div class="label">Score</div>
-                <div class="value">${data.tradeability_score}</div>
-              </div>
-              <div class="metric">
-                <div class="label">Spread</div>
-                <div class="value">${data.execution_metrics?.spread_penalty || '—'}</div>
-              </div>
-              <div class="metric">
-                <div class="label">Session</div>
-                <div class="value">${data.execution_metrics?.session_alignment || '—'}</div>
-              </div>
-              <div class="metric">
-                <div class="label">News</div>
-                <div class="value">${data.execution_metrics?.news_buffer_status || '—'}</div>
-              </div>
-            </div>
-            <div class="valid-until">Valid until: ${new Date(data.forecast_valid_until).toLocaleString()}</div>
-          </div>
-        `;
+        // 2. Regime & Pipeline State
+        html += renderRegimeCard(researchForecasts[0], traces);
+
+        // 3. Pipeline Execution Traces
+        html += renderTracesCard(traces);
+
+        // 4. Top Similarity Matches
+        html += renderSimilarityCard(similarity);
+
+        // 5. Research Archive History
+        html += renderHistoryCard(researchForecasts);
+
+        content.innerHTML = html;
       } catch (err) {
-        content.innerHTML = `<div class="card"><p class="error">Failed to connect: ${err.message}</p></div>`;
+        content.innerHTML = `<div class="card grid-full"><p class="error">Failed to load: ${err.message}</p></div>`;
       }
     }
 
-    fetchForecast();
+    async function fetchForecastData() {
+      const baseUrl = document.getElementById('api-url').value.replace(/\/$/, '');
+      const res = await fetch(`${baseUrl}/v1/forecast/EURUSD`);
+      if (!res.ok) throw new Error('API returned ' + res.status);
+      return res.json();
+    }
+
+    function renderForecastCard(data) {
+      const dp = data.direction_probabilities;
+      const label = data.tradeability_label || 'NO_GO';
+      const badgeClass = `badge-${label.toLowerCase()}`;
+      const dominant = dp.up >= dp.down && dp.up >= dp.flat ? 'UP' : dp.down >= dp.flat ? 'DOWN' : 'FLAT';
+
+      return `
+        <div class="card">
+          <h2><span class="dot"></span>Live Forecast</h2>
+          <div class="asset">EUR/USD <span style="font-size:0.8rem;color:#8b98a5;font-weight:400">4H</span></div>
+          <div class="direction">
+            <div class="dir-item up">
+              <div class="label">UP</div>
+              <div class="value">${(dp.up * 100).toFixed(0)}%</div>
+            </div>
+            <div class="dir-item down">
+              <div class="label">DOWN</div>
+              <div class="value">${(dp.down * 100).toFixed(0)}%</div>
+            </div>
+            <div class="dir-item flat">
+              <div class="label">FLAT</div>
+              <div class="value">${(dp.flat * 100).toFixed(0)}%</div>
+            </div>
+          </div>
+          <div class="metrics">
+            <div class="metric">
+              <div class="label">Expected Move</div>
+              <div class="value">${data.expected_move_pips > 0 ? '+' : ''}${data.expected_move_pips} pips</div>
+            </div>
+            <div class="metric">
+              <div class="label">Confidence</div>
+              <div class="value">${(data.confidence_final * 100).toFixed(1)}%</div>
+            </div>
+            <div class="metric">
+              <div class="label">Tradeability</div>
+              <div class="value"><span class="badge ${badgeClass}">${label}</span></div>
+            </div>
+            <div class="metric">
+              <div class="label">Direction</div>
+              <div class="value">${dominant}</div>
+            </div>
+          </div>
+          <div class="valid-until">Valid until: ${new Date(data.forecast_valid_until).toLocaleString()} · Spread: ${data.execution_metrics?.spread_penalty || '—'} · Session: ${data.execution_metrics?.session_alignment || '—'}</div>
+        </div>
+      `;
+    }
+
+    function renderRegimeCard(latestResearch, traces) {
+      if (!latestResearch) return '<div class="card"><h2>Regime & State</h2><p style="color:#8b98a5;font-size:0.8rem">No research data yet</p></div>';
+
+      const regime = latestResearch.regime || {};
+      const ev = latestResearch.engine_versions || {};
+      const successCount = traces.filter(t => t.status === 'success').length;
+      const errorCount = traces.filter(t => t.status === 'error').length;
+      const totalMs = traces.filter(t => t.status === 'success').reduce((sum, t) => sum + t.execution_time_ms, 0);
+
+      return `
+        <div class="card">
+          <h2><span class="dot ${errorCount > 0 ? 'error' : ''}"></span>Market Regime & Pipeline</h2>
+          <div class="regime-tags">
+            <div class="regime-tag active">${regime.volatility_regime || '—'} vol</div>
+            <div class="regime-tag active">${regime.trend_regime || '—'} trend</div>
+            <div class="regime-tag active">${regime.session || '—'} session</div>
+          </div>
+          <div class="metrics" style="margin-top:1rem">
+            <div class="metric">
+              <div class="label">Sample Size</div>
+              <div class="value">${latestResearch.sample_size}</div>
+            </div>
+            <div class="metric">
+              <div class="label">Pipeline</div>
+              <div class="value">${successCount}/${successCount + errorCount} ✓</div>
+            </div>
+            <div class="metric">
+              <div class="label">Total Duration</div>
+              <div class="value">${totalMs}ms</div>
+            </div>
+            <div class="metric">
+              <div class="label">Fingerprint Engine</div>
+              <div class="value">v${ev.fingerprint || '—'}</div>
+            </div>
+          </div>
+        </div>
+      `;
+    }
+
+    function renderTracesCard(traces) {
+      // Only show the most recent successful batch traces
+      const recentSuccess = traces.filter(t => t.status === 'success').slice(0, 11);
+      if (recentSuccess.length === 0) return '<div class="card grid-full"><h2>Pipeline Execution</h2><p style="color:#8b98a5;font-size:0.8rem">No traces yet</p></div>';
+
+      const maxMs = Math.max(...recentSuccess.map(t => t.execution_time_ms), 1);
+
+      const items = recentSuccess.reverse().map(t => `
+        <div class="trace-item">
+          <div class="status-dot ${t.status}"></div>
+          <div class="name">${t.engine_name}</div>
+          <div class="version">v${t.engine_version}</div>
+          <div class="duration-bar"><div class="duration-fill" style="width:${(t.execution_time_ms / maxMs * 100).toFixed(0)}%"></div></div>
+          <div class="duration-label">${t.execution_time_ms}ms</div>
+        </div>
+      `).join('');
+
+      return `
+        <div class="card grid-full">
+          <h2>Pipeline Execution Trace</h2>
+          <div class="trace-timeline">${items}</div>
+        </div>
+      `;
+    }
+
+    function renderSimilarityCard(matches) {
+      if (!matches || matches.length === 0) return '<div class="card grid-full"><h2>Similarity Matches</h2><p style="color:#8b98a5;font-size:0.8rem">No matches yet</p></div>';
+
+      const rows = matches.map(m => {
+        const lb = m.layer_breakdown;
+        const score = (m.similarity_score * 100).toFixed(2);
+        const layers = ['market_structure', 'volatility', 'liquidity', 'macro', 'sentiment'];
+        const layerBars = layers.map(l => {
+          const v = lb[l] || 0;
+          const color = v > 0.9 ? '#00c853' : v > 0.7 ? '#ffab00' : '#ff1744';
+          return `<span title="${l}: ${(v*100).toFixed(1)}%" style="display:inline-block;width:24px;height:8px;background:#2f3336;border-radius:2px;position:relative;overflow:hidden"><span style="position:absolute;left:0;top:0;height:100%;width:${(v*100).toFixed(0)}%;background:${color};border-radius:2px"></span></span>`;
+        }).join('');
+
+        const reason = m.match_explanation?.primary_match_reason || '—';
+        const matched = (m.match_explanation?.matched_layers || []).join(', ') || '—';
+
+        return `
+          <tr>
+            <td style="color:#8b98a5">#${m.rank}</td>
+            <td style="font-family:monospace;font-size:0.65rem;color:#8b98a5">${m.match_fingerprint_id.slice(0, 12)}…</td>
+            <td><strong>${score}%</strong></td>
+            <td>${layerBars}</td>
+            <td style="color:#8b98a5;font-size:0.7rem">${matched}</td>
+          </tr>
+        `;
+      }).join('');
+
+      return `
+        <div class="card grid-full">
+          <h2>Top Similarity Matches <span style="font-size:0.7rem;color:#8b98a5;text-transform:none;letter-spacing:0;font-weight:400">(${matches.length} of 50 shown)</span></h2>
+          <table class="sim-table">
+            <thead>
+              <tr><th>Rank</th><th>Fingerprint</th><th>Score</th><th>L1 · L2 · L3 · L4 · L5</th><th>Matched Layers</th></tr>
+            </thead>
+            <tbody>${rows}</tbody>
+          </table>
+        </div>
+      `;
+    }
+
+    function renderHistoryCard(forecasts) {
+      if (!forecasts || forecasts.length === 0) return '<div class="card"><h2>Research Archive</h2><p style="color:#8b98a5;font-size:0.8rem">No archived forecasts yet</p></div>';
+
+      const items = forecasts.map(f => {
+        const dp = f.direction_probabilities;
+        const dominant = dp.up >= dp.down && dp.up >= dp.flat ? 'UP' : dp.down >= dp.flat ? 'DOWN' : 'FLAT';
+        const color = dominant === 'UP' ? '#00c853' : dominant === 'DOWN' ? '#ff1744' : '#ffab00';
+        const time = new Date(f.created_at).toLocaleString(undefined, { month: 'short', day: 'numeric', hour: '2-digit', minute: '2-digit' });
+
+        return `
+          <div class="history-item">
+            <div class="time">${time}</div>
+            <div class="dir"><span style="background:${color}20;color:${color}">${dominant} ${(Math.max(dp.up, dp.down, dp.flat) * 100).toFixed(0)}%</span></div>
+            <div class="move">${f.expected_move_pips > 0 ? '+' : ''}${f.expected_move_pips} pips</div>
+            <div class="conf">${(f.confidence_final * 100).toFixed(1)}%</div>
+          </div>
+        `;
+      }).join('');
+
+      return `
+        <div class="card">
+          <h2>Research Archive <span style="font-size:0.7rem;color:#8b98a5;text-transform:none;letter-spacing:0;font-weight:400">(${forecasts.length} recent)</span></h2>
+          <div class="history-list">${items}</div>
+        </div>
+      `;
+    }
+
+    // Initial load
+    refreshAll();
+
+    // Auto-refresh every 60 seconds
+    setInterval(refreshAll, 60000);
   </script>
 </body>
 </html>

@@ -413,7 +413,7 @@ Transform the Financial Intelligence Platform into a deterministic financial res
     - Test RLS policies reject UPDATE/DELETE on research tables
     - _Requirements: 20.1, 20.3_
 
-- [~] 16. Final checkpoint - Ensure all tests pass
+- [x] 16. Final checkpoint - Ensure all tests pass
   - Ensure all tests pass, ask the user if questions arise.
 
 ## Notes

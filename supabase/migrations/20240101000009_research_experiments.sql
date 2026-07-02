@@ -17,7 +17,7 @@ CREATE TABLE IF NOT EXISTS research_experiments (
     experiment_id UUID NOT NULL,
     engine_versions JSONB NOT NULL,
     original_batch_id UUID,
-    input_fingerprint_id UUID,
+    input_fingerprint_id VARCHAR,
     output JSONB,
     status VARCHAR(20) NOT NULL DEFAULT 'running',
     failure_detail TEXT,

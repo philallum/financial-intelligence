@@ -18,7 +18,7 @@
 -- =============================================================================
 CREATE TABLE IF NOT EXISTS fingerprint_topology (
     id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
-    fingerprint_id UUID NOT NULL,
+    fingerprint_id VARCHAR NOT NULL,
     asset VARCHAR(10) NOT NULL,
     levels JSONB NOT NULL DEFAULT '[]',
     topology_vector vector(40),
@@ -26,9 +26,7 @@ CREATE TABLE IF NOT EXISTS fingerprint_topology (
     candle_count_used INTEGER NOT NULL,
     engine_version VARCHAR(10) NOT NULL,
     created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
-    CONSTRAINT uq_topo_fp_asset UNIQUE (fingerprint_id, asset),
-    CONSTRAINT fk_topo_fingerprint FOREIGN KEY (fingerprint_id, asset)
-        REFERENCES market_fingerprints(fingerprint_id, asset)
+    CONSTRAINT uq_topo_fp_asset UNIQUE (fingerprint_id, asset)
 );
 
 -- =============================================================================

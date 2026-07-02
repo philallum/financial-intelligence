@@ -13,7 +13,7 @@
 -- =============================================================================
 CREATE TABLE IF NOT EXISTS research_forecasts (
     id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
-    fingerprint_id UUID NOT NULL,
+    fingerprint_id VARCHAR NOT NULL,
     batch_id UUID NOT NULL,
     asset VARCHAR(10) NOT NULL,
     timeframe VARCHAR(4) NOT NULL DEFAULT '4H',

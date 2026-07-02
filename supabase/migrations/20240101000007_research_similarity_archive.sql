@@ -16,8 +16,8 @@
 -- =============================================================================
 CREATE TABLE IF NOT EXISTS research_similarity_archive (
     id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
-    fingerprint_id UUID NOT NULL,
-    match_fingerprint_id UUID NOT NULL,
+    fingerprint_id VARCHAR NOT NULL,
+    match_fingerprint_id VARCHAR NOT NULL,
     similarity_score NUMERIC(8, 6) NOT NULL,
     layer_breakdown JSONB NOT NULL,
     match_explanation JSONB NOT NULL,
