@@ -82,7 +82,7 @@
 </head>
 <body>
   <h1>Financial Intelligence Platform</h1>
-  <div class="subtitle">Deterministic Financial Research · EUR/USD 4H</div>
+  <div class="subtitle">Deterministic Financial Research · EUR/USD · Next 4 Hours</div>
 
   <div class="config">
     <input id="api-url" type="text" placeholder="API URL" value="https://financial-intelligence-api-517029156879.europe-west1.run.app">
@@ -157,51 +157,53 @@
       const dp = data.direction_probabilities;
       const label = data.tradeability_label || 'NO_GO';
       const badgeClass = `badge-${label.toLowerCase()}`;
+      const badgeText = label === 'GO' ? 'Good to Trade' : label === 'CONDITIONAL' ? 'Trade with Caution' : "Don't Trade Now";
       const dominant = dp.up >= dp.down && dp.up >= dp.flat ? 'UP' : dp.down >= dp.flat ? 'DOWN' : 'FLAT';
+      const dominantText = dominant === 'UP' ? 'Price Goes Up' : dominant === 'DOWN' ? 'Price Goes Down' : 'Price Stays Flat';
 
       return `
         <div class="card">
-          <h2><span class="dot"></span>Live Forecast</h2>
-          <div class="asset">EUR/USD <span style="font-size:0.8rem;color:#8b98a5;font-weight:400">4H</span></div>
+          <h2><span class="dot"></span>Current Prediction</h2>
+          <div class="asset">EUR/USD <span style="font-size:0.8rem;color:#8b98a5;font-weight:400">· Next 4 Hours</span></div>
           <div class="direction">
             <div class="dir-item up">
-              <div class="label">UP</div>
+              <div class="label">Price Goes Up</div>
               <div class="value">${(dp.up * 100).toFixed(0)}%</div>
             </div>
             <div class="dir-item down">
-              <div class="label">DOWN</div>
+              <div class="label">Price Goes Down</div>
               <div class="value">${(dp.down * 100).toFixed(0)}%</div>
             </div>
             <div class="dir-item flat">
-              <div class="label">FLAT</div>
+              <div class="label">Price Stays Flat</div>
               <div class="value">${(dp.flat * 100).toFixed(0)}%</div>
             </div>
           </div>
           <div class="metrics">
             <div class="metric">
-              <div class="label">Expected Move</div>
-              <div class="value">${data.expected_move_pips > 0 ? '+' : ''}${data.expected_move_pips} pips</div>
+              <div class="label">Predicted Price Change</div>
+              <div class="value">${data.expected_move_pips > 0 ? '+' : ''}${data.expected_move_pips} points</div>
             </div>
             <div class="metric">
-              <div class="label">Confidence</div>
+              <div class="label">How Sure We Are</div>
               <div class="value">${(data.confidence_final * 100).toFixed(1)}%</div>
             </div>
             <div class="metric">
-              <div class="label">Tradeability</div>
-              <div class="value"><span class="badge ${badgeClass}">${label}</span></div>
+              <div class="label">Should You Act?</div>
+              <div class="value"><span class="badge ${badgeClass}">${badgeText}</span></div>
             </div>
             <div class="metric">
-              <div class="label">Direction</div>
-              <div class="value">${dominant}</div>
+              <div class="label">Most Likely Direction</div>
+              <div class="value">${dominantText}</div>
             </div>
           </div>
-          <div class="valid-until">Valid until: ${new Date(data.forecast_valid_until).toLocaleString()} · Spread: ${data.execution_metrics?.spread_penalty || '—'} · Session: ${data.execution_metrics?.session_alignment || '—'}</div>
+          <div class="valid-until">Prediction expires: ${new Date(data.forecast_valid_until).toLocaleString()} · Trading Cost: ${data.execution_metrics?.spread_penalty || '—'} · Market Hours: ${data.execution_metrics?.session_alignment || '—'}</div>
         </div>
       `;
     }
 
     function renderRegimeCard(latestResearch, traces) {
-      if (!latestResearch) return '<div class="card"><h2>Regime & State</h2><p style="color:#8b98a5;font-size:0.8rem">No research data yet</p></div>';
+      if (!latestResearch) return '<div class="card"><h2>Current Market Conditions & System Health</h2><p style="color:#8b98a5;font-size:0.8rem">No research data yet</p></div>';
 
       const regime = latestResearch.regime || {};
       const ev = latestResearch.engine_versions || {};
@@ -209,29 +211,36 @@
       const errorCount = traces.filter(t => t.status === 'error').length;
       const totalMs = traces.filter(t => t.status === 'success').reduce((sum, t) => sum + t.execution_time_ms, 0);
 
+      const volLabel = (regime.volatility_regime || '—').toLowerCase();
+      const volText = volLabel === 'low' ? 'Calm Market' : volLabel === 'high' ? 'Volatile Market' : 'Normal Market';
+      const trendLabel = (regime.trend_regime || '—').toLowerCase();
+      const trendText = trendLabel === 'bullish' ? 'Prices Rising' : trendLabel === 'bearish' ? 'Prices Falling' : 'Prices Ranging';
+      const sessionLabel = (regime.session || '—').toLowerCase();
+      const sessionText = sessionLabel === 'london' ? 'London Trading Hours' : sessionLabel === 'ny' ? 'New York Trading Hours' : sessionLabel === 'asia' ? 'Asia Trading Hours' : regime.session || '—';
+
       return `
         <div class="card">
-          <h2><span class="dot ${errorCount > 0 ? 'error' : ''}"></span>Market Regime & Pipeline</h2>
+          <h2><span class="dot ${errorCount > 0 ? 'error' : ''}"></span>Current Market Conditions & System Health</h2>
           <div class="regime-tags">
-            <div class="regime-tag active">${regime.volatility_regime || '—'} vol</div>
-            <div class="regime-tag active">${regime.trend_regime || '—'} trend</div>
-            <div class="regime-tag active">${regime.session || '—'} session</div>
+            <div class="regime-tag active">${volText}</div>
+            <div class="regime-tag active">${trendText}</div>
+            <div class="regime-tag active">${sessionText}</div>
           </div>
           <div class="metrics" style="margin-top:1rem">
             <div class="metric">
-              <div class="label">Sample Size</div>
+              <div class="label">Data Points Used</div>
               <div class="value">${latestResearch.sample_size}</div>
             </div>
             <div class="metric">
-              <div class="label">Pipeline</div>
-              <div class="value">${successCount}/${successCount + errorCount} ✓</div>
+              <div class="label">System Steps Completed</div>
+              <div class="value">${successCount} of ${successCount + errorCount} succeeded</div>
             </div>
             <div class="metric">
-              <div class="label">Total Duration</div>
+              <div class="label">Processing Time</div>
               <div class="value">${totalMs}ms</div>
             </div>
             <div class="metric">
-              <div class="label">Fingerprint Engine</div>
+              <div class="label">Pattern Matcher Version</div>
               <div class="value">v${ev.fingerprint || '—'}</div>
             </div>
           </div>
@@ -242,39 +251,56 @@
     function renderTracesCard(traces) {
       // Only show the most recent successful batch traces
       const recentSuccess = traces.filter(t => t.status === 'success').slice(0, 11);
-      if (recentSuccess.length === 0) return '<div class="card grid-full"><h2>Pipeline Execution</h2><p style="color:#8b98a5;font-size:0.8rem">No traces yet</p></div>';
+      if (recentSuccess.length === 0) return '<div class="card grid-full"><h2>System Processing Steps</h2><p style="color:#8b98a5;font-size:0.8rem">No traces yet</p></div>';
 
       const maxMs = Math.max(...recentSuccess.map(t => t.execution_time_ms), 1);
 
-      const items = recentSuccess.reverse().map(t => `
-        <div class="trace-item">
-          <div class="status-dot ${t.status}"></div>
-          <div class="name">${t.engine_name}</div>
-          <div class="version">v${t.engine_version}</div>
-          <div class="duration-bar"><div class="duration-fill" style="width:${(t.execution_time_ms / maxMs * 100).toFixed(0)}%"></div></div>
-          <div class="duration-label">${t.execution_time_ms}ms</div>
-        </div>
-      `).join('');
+      const engineNameMap = {
+        'confidence-engine': 'Confidence Calculator',
+        'confidence-engine-v2': 'Confidence Calculator v2',
+        'regime-engine': 'Market Conditions',
+        'regime-engine-v2': 'Market Conditions v2',
+        'fingerprint-engine': 'Pattern Matcher',
+        'similarity-engine': 'Similar Situations Finder',
+        'forecast-engine': 'Prediction Generator',
+        'topology-engine': 'Market Structure',
+        'tradeability-engine': 'Trade Readiness',
+        'outcome-engine': 'Outcome Tracker',
+      };
+
+      const items = recentSuccess.reverse().map(t => {
+        const friendlyName = engineNameMap[t.engine_name] || t.engine_name;
+        return `
+          <div class="trace-item">
+            <div class="status-dot ${t.status}"></div>
+            <div class="name">${friendlyName}</div>
+            <div class="version">v${t.engine_version}</div>
+            <div class="duration-bar"><div class="duration-fill" style="width:${(t.execution_time_ms / maxMs * 100).toFixed(0)}%"></div></div>
+            <div class="duration-label">${t.execution_time_ms}ms</div>
+          </div>
+        `;
+      }).join('');
 
       return `
         <div class="card grid-full">
-          <h2>Pipeline Execution Trace</h2>
+          <h2>System Processing Steps</h2>
           <div class="trace-timeline">${items}</div>
         </div>
       `;
     }
 
     function renderSimilarityCard(matches) {
-      if (!matches || matches.length === 0) return '<div class="card grid-full"><h2>Similarity Matches</h2><p style="color:#8b98a5;font-size:0.8rem">No matches yet</p></div>';
+      if (!matches || matches.length === 0) return '<div class="card grid-full"><h2>Most Similar Past Situations</h2><p style="color:#8b98a5;font-size:0.8rem">No matches yet</p></div>';
 
       const rows = matches.map(m => {
         const lb = m.layer_breakdown;
         const score = (m.similarity_score * 100).toFixed(2);
         const layers = ['market_structure', 'volatility', 'liquidity', 'macro', 'sentiment'];
-        const layerBars = layers.map(l => {
+        const layerNames = ['Structure', 'Volatility', 'Liquidity', 'Economy', 'Sentiment'];
+        const layerBars = layers.map((l, i) => {
           const v = lb[l] || 0;
           const color = v > 0.9 ? '#00c853' : v > 0.7 ? '#ffab00' : '#ff1744';
-          return `<span title="${l}: ${(v*100).toFixed(1)}%" style="display:inline-block;width:24px;height:8px;background:#2f3336;border-radius:2px;position:relative;overflow:hidden"><span style="position:absolute;left:0;top:0;height:100%;width:${(v*100).toFixed(0)}%;background:${color};border-radius:2px"></span></span>`;
+          return `<span title="${layerNames[i]}: ${(v*100).toFixed(1)}%" style="display:inline-block;width:24px;height:8px;background:#2f3336;border-radius:2px;position:relative;overflow:hidden"><span style="position:absolute;left:0;top:0;height:100%;width:${(v*100).toFixed(0)}%;background:${color};border-radius:2px"></span></span>`;
         }).join('');
 
         const reason = m.match_explanation?.primary_match_reason || '—';
@@ -293,10 +319,10 @@
 
       return `
         <div class="card grid-full">
-          <h2>Top Similarity Matches <span style="font-size:0.7rem;color:#8b98a5;text-transform:none;letter-spacing:0;font-weight:400">(${matches.length} of 50 shown)</span></h2>
+          <h2>Most Similar Past Situations <span style="font-size:0.7rem;color:#8b98a5;text-transform:none;letter-spacing:0;font-weight:400">(${matches.length} of 50 shown)</span></h2>
           <table class="sim-table">
             <thead>
-              <tr><th>Rank</th><th>Fingerprint</th><th>Score</th><th>L1 · L2 · L3 · L4 · L5</th><th>Matched Layers</th></tr>
+              <tr><th>Rank</th><th>Pattern ID</th><th>How Similar (%)</th><th>Structure · Volatility · Liquidity · Economy · Sentiment</th><th>What Matched</th></tr>
             </thead>
             <tbody>${rows}</tbody>
           </table>
@@ -305,19 +331,20 @@
     }
 
     function renderHistoryCard(forecasts) {
-      if (!forecasts || forecasts.length === 0) return '<div class="card"><h2>Research Archive</h2><p style="color:#8b98a5;font-size:0.8rem">No archived forecasts yet</p></div>';
+      if (!forecasts || forecasts.length === 0) return '<div class="card"><h2>Prediction History</h2><p style="color:#8b98a5;font-size:0.8rem">No archived predictions yet</p></div>';
 
       const items = forecasts.map(f => {
         const dp = f.direction_probabilities;
         const dominant = dp.up >= dp.down && dp.up >= dp.flat ? 'UP' : dp.down >= dp.flat ? 'DOWN' : 'FLAT';
+        const dominantText = dominant === 'UP' ? 'Price Up' : dominant === 'DOWN' ? 'Price Down' : 'Flat';
         const color = dominant === 'UP' ? '#00c853' : dominant === 'DOWN' ? '#ff1744' : '#ffab00';
         const time = new Date(f.created_at).toLocaleString(undefined, { month: 'short', day: 'numeric', hour: '2-digit', minute: '2-digit' });
 
         return `
           <div class="history-item">
             <div class="time">${time}</div>
-            <div class="dir"><span style="background:${color}20;color:${color}">${dominant} ${(Math.max(dp.up, dp.down, dp.flat) * 100).toFixed(0)}%</span></div>
-            <div class="move">${f.expected_move_pips > 0 ? '+' : ''}${f.expected_move_pips} pips</div>
+            <div class="dir"><span style="background:${color}20;color:${color}">${dominantText} ${(Math.max(dp.up, dp.down, dp.flat) * 100).toFixed(0)}%</span></div>
+            <div class="move">${f.expected_move_pips > 0 ? '+' : ''}${f.expected_move_pips} pts</div>
             <div class="conf">${(f.confidence_final * 100).toFixed(1)}%</div>
           </div>
         `;
@@ -325,7 +352,7 @@
 
       return `
         <div class="card">
-          <h2>Research Archive <span style="font-size:0.7rem;color:#8b98a5;text-transform:none;letter-spacing:0;font-weight:400">(${forecasts.length} recent)</span></h2>
+          <h2>Prediction History <span style="font-size:0.7rem;color:#8b98a5;text-transform:none;letter-spacing:0;font-weight:400">(${forecasts.length} recent)</span></h2>
           <div class="history-list">${items}</div>
         </div>
       `;

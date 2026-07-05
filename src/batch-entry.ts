@@ -296,11 +296,18 @@ function createStageHandlers(supabase: SupabaseClient): StageHandlers {
     async cache_write(data) {
       const { CacheWriter } = await import('./services/cache/cache-writer.js');
       const writer = new CacheWriter(supabase);
+      // Merge confidence output into forecast before caching
+      // (forecast engine sets confidence_raw/confidence_final as 0 placeholders)
+      const enrichedForecast = {
+        ...data.forecast,
+        confidence_raw: data.confidence.confidence_raw,
+        confidence_final: data.confidence.confidence_final,
+      };
       // The cache_write stage assumes the batch has completed successfully
       // since it is the final stage in the pipeline
       await writer.writeForecast(
         data.fingerprint.asset,
-        data.forecast,
+        enrichedForecast,
         true, // batch completed — this is the final stage
       );
     },
