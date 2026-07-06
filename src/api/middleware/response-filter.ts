@@ -1,219 +1,160 @@
 /**
- * Response Mode Filter Middleware
+ * Tier-Based Response Filter Middleware
  *
- * Validates response mode access based on customer tier and strips
- * fields from responses according to mode and tier restrictions.
+ * Strips response fields based on customer tier before serialisation.
+ * Works identically for direct API key and RapidAPI marketplace requests
+ * — both paths set req.tier via auth middleware.
  *
- * Requirements: 11.1, 11.2, 11.3, 11.8, 11.9, 11.10, 11.12
+ * Requirements: 4.1, 4.2, 4.3, 4.4, 4.5, 4.6
  */
 
 import type { Request, Response, NextFunction } from 'express';
-import { ResponseMode, CustomerTier } from '../../types/enums.js';
+import { CustomerTier } from '../../types/enums.js';
 
 // =============================================================================
-// Types
-// =============================================================================
-
-/** Interface for the response mode router middleware. */
-export interface ResponseModeRouter {
-  /** Express middleware that resolves mode, validates access, and attaches to request. */
-  middleware: (req: Request, res: Response, next: NextFunction) => void;
-}
-
-/** Fields that are allowed in each response mode. */
-type ModeFieldSet = readonly string[];
-
-// =============================================================================
-// MODE_ACCESS Matrix (Req 11.8, 11.9)
+// Field Definitions
 // =============================================================================
 
 /**
- * Defines which response modes each customer tier is authorized to use.
- * Retail: forecast, trade only
- * Developer+: forecast, trade, explain, raw
- * Research+: all modes including research
+ * Fields returned for anonymous (unauthenticated) requests.
+ * Only the bare minimum for developer onboarding / marketing preview.
  */
-const MODE_ACCESS: Record<CustomerTier, readonly ResponseMode[]> = {
-  [CustomerTier.RETAIL]: [ResponseMode.FORECAST, ResponseMode.TRADE],
-  [CustomerTier.DEVELOPER]: [
-    ResponseMode.FORECAST,
-    ResponseMode.TRADE,
-    ResponseMode.EXPLAIN,
-    ResponseMode.RAW,
-  ],
-  [CustomerTier.RESEARCH]: [
-    ResponseMode.FORECAST,
-    ResponseMode.TRADE,
-    ResponseMode.EXPLAIN,
-    ResponseMode.RAW,
-    ResponseMode.RESEARCH,
-  ],
-  [CustomerTier.INTERNAL]: [
-    ResponseMode.FORECAST,
-    ResponseMode.TRADE,
-    ResponseMode.EXPLAIN,
-    ResponseMode.RAW,
-    ResponseMode.RESEARCH,
-  ],
-} as const;
+const ANONYMOUS_FIELDS: string[] = [
+  'confidence_final',
+  'direction_probabilities',
+  'tradeability_label',
+];
 
-// =============================================================================
-// Mode Field Definitions (Req 11.8)
-// =============================================================================
-
-/** Fields returned in forecast mode — core prediction only. */
-const FORECAST_FIELDS: ModeFieldSet = [
+/**
+ * Fields allowed per customer tier (cumulative — each tier includes
+ * all fields from tiers below it).
+ */
+const RETAIL_FIELDS: string[] = [
   'direction_probabilities',
   'expected_move_pips',
   'confidence_final',
-];
-
-/** Fields returned in trade mode — tradeability evaluation only. */
-const TRADE_FIELDS: ModeFieldSet = [
   'tradeability_score',
   'tradeability_label',
-  'execution_metrics',
+  'forecast_valid_until',
 ];
 
-/** Fields returned in explain mode — forecast + reasoning. */
-const EXPLAIN_FIELDS: ModeFieldSet = [
-  ...FORECAST_FIELDS,
-  'match_explanation',
-  'contributing_factors',
-];
-
-/**
- * Fields that MUST NOT be returned to retail customers (Req 11.1).
- * Raw vectors and similarity matrices are excluded.
- */
-const RETAIL_RESTRICTED_FIELDS: readonly string[] = [
+const DEVELOPER_ADDITIONAL_FIELDS: string[] = [
   'state_layers',
   'layer_breakdown',
   'similarity_matches',
+  'match_explanation',
+  'contributing_factors',
+  'execution_metrics',
 ];
+
+const RESEARCH_ADDITIONAL_FIELDS: string[] = [
+  'historical_distributions',
+  'time_series_data',
+  'research_metadata',
+];
+
+/**
+ * Fields that MUST be excluded from all non-INTERNAL tiers.
+ * These contain internal debugging data (Req 4.3).
+ */
+const INTERNAL_ONLY_FIELDS: string[] = [
+  'trace_id_internal',
+  'pipeline_debug',
+  'raw_engine_logs',
+];
+
+/**
+ * Pre-computed allowed field sets per tier for efficient lookup.
+ */
+const TIER_ALLOWED_FIELDS: Record<CustomerTier, string[] | null> = {
+  [CustomerTier.RETAIL]: [...RETAIL_FIELDS],
+  [CustomerTier.DEVELOPER]: [...RETAIL_FIELDS, ...DEVELOPER_ADDITIONAL_FIELDS],
+  [CustomerTier.RESEARCH]: [...RETAIL_FIELDS, ...DEVELOPER_ADDITIONAL_FIELDS, ...RESEARCH_ADDITIONAL_FIELDS],
+  [CustomerTier.INTERNAL]: null, // null means no restrictions — return everything
+};
 
 // =============================================================================
 // Public Functions
 // =============================================================================
 
 /**
- * Resolves the response mode from a query parameter string.
- * Defaults to FORECAST when parameter is absent or empty (Req 11.12).
- */
-export function resolveMode(queryParam?: string | null): ResponseMode {
-  if (!queryParam || queryParam.trim() === '') {
-    return ResponseMode.FORECAST;
-  }
-
-  const normalized = queryParam.trim().toUpperCase();
-  const validModes = Object.values(ResponseMode) as string[];
-
-  if (validModes.includes(normalized)) {
-    return normalized as ResponseMode;
-  }
-
-  // Invalid mode string — default to FORECAST
-  return ResponseMode.FORECAST;
-}
-
-/**
- * Validates whether a customer tier is authorized to use the requested mode.
- * Returns true if access is allowed, false otherwise (Req 11.9).
- */
-export function validateModeAccess(mode: ResponseMode, tier: CustomerTier): boolean {
-  const allowedModes = MODE_ACCESS[tier];
-  return allowedModes.includes(mode);
-}
-
-/**
- * Filters a full response object based on the requested mode and customer tier.
- * Strips fields according to mode restrictions and retail tier limitations.
+ * Filters a full response object based on customer tier and anonymous status.
  *
- * - forecast: direction_probabilities, expected_move_pips, confidence_final
- * - trade: tradeability_score, tradeability_label, execution_metrics
- * - explain: forecast fields + match_explanation, contributing_factors
- * - raw: everything (no stripping except retail restrictions)
- * - research: everything + historical_distributions, time_series_data
+ * - Anonymous: returns only confidence_final, direction_probabilities, tradeability_label
+ * - RETAIL: returns 6 core forecast/trade fields (Req 4.1)
+ * - DEVELOPER: RETAIL + 6 state/explanation fields (Req 4.2)
+ * - RESEARCH: DEVELOPER + 3 research fields, minus internal-only fields (Req 4.3)
+ * - INTERNAL: complete unfiltered payload (Req 4.4)
+ * - Missing tier: defaults to RETAIL filtering (Req 4.6)
  *
- * Retail tier: MUST NOT receive state_layers, layer_breakdown, similarity_matches (Req 11.1)
+ * Exported for direct use in unit and property-based testing.
  */
 export function filterResponse(
   fullResponse: Record<string, unknown>,
-  mode: ResponseMode,
-  tier: CustomerTier,
+  tier: CustomerTier | undefined,
+  anonymous: boolean = false,
 ): Record<string, unknown> {
-  let filtered: Record<string, unknown>;
-
-  switch (mode) {
-    case ResponseMode.FORECAST: {
-      filtered = pickFields(fullResponse, FORECAST_FIELDS);
-      break;
-    }
-    case ResponseMode.TRADE: {
-      filtered = pickFields(fullResponse, TRADE_FIELDS);
-      break;
-    }
-    case ResponseMode.EXPLAIN: {
-      filtered = pickFields(fullResponse, EXPLAIN_FIELDS);
-      break;
-    }
-    case ResponseMode.RAW: {
-      filtered = { ...fullResponse };
-      break;
-    }
-    case ResponseMode.RESEARCH: {
-      filtered = { ...fullResponse };
-      break;
-    }
-    default: {
-      filtered = pickFields(fullResponse, FORECAST_FIELDS);
-      break;
-    }
+  // Anonymous access — most restrictive
+  if (anonymous) {
+    return pickFields(fullResponse, ANONYMOUS_FIELDS);
   }
 
-  // Apply retail tier restrictions regardless of mode (Req 11.1)
-  if (tier === CustomerTier.RETAIL) {
-    filtered = stripRetailRestrictedFields(filtered);
+  // Default to RETAIL when tier is missing (Req 4.6)
+  const effectiveTier = tier ?? CustomerTier.RETAIL;
+
+  // INTERNAL — return everything unmodified (Req 4.4)
+  const allowedFields = TIER_ALLOWED_FIELDS[effectiveTier];
+  if (allowedFields === null) {
+    return { ...fullResponse };
   }
 
-  return filtered;
+  // For RESEARCH tier, we need to also exclude internal-only fields (Req 4.3)
+  // For all other non-INTERNAL tiers, internal-only fields are simply not in their
+  // allowed list, so they're excluded by the pick operation.
+  return pickFields(fullResponse, allowedFields);
 }
 
 /**
- * Creates a ResponseModeRouter middleware instance.
+ * Creates Express middleware that intercepts res.json() to apply tier-based
+ * field filtering before the response is sent to the client.
  *
- * The middleware:
- * 1. Reads mode from req.query.mode
- * 2. Reads tier from (req as any).tier (set by auth middleware)
- * 3. Resolves mode (defaults to FORECAST if absent)
- * 4. Validates tier has access to mode
- * 5. Attaches resolved mode to (req as any).responseMode
- * 6. Calls next() or returns 403 error
+ * Reads req.tier and req.anonymous (set by auth middleware) to determine
+ * filtering level. Works identically for direct and RapidAPI requests.
  */
-export function createResponseFilter(): ResponseModeRouter {
-  const middleware = (req: Request, res: Response, next: NextFunction): void => {
-    const modeParam = req.query.mode as string | undefined;
-    const tier = (req as unknown as Record<string, unknown>).tier as CustomerTier | undefined;
+export function createResponseFilter() {
+  const middleware = (_req: Request, res: Response, next: NextFunction): void => {
+    const originalJson = res.json.bind(res);
 
-    // Resolve the mode (defaults to FORECAST per Req 11.12)
-    const resolvedMode = resolveMode(modeParam);
+    res.json = function (body: unknown): Response {
+      // Only filter plain objects with a data payload or top-level response objects
+      if (body === null || body === undefined || typeof body !== 'object' || Array.isArray(body)) {
+        return originalJson(body);
+      }
 
-    // If no tier is set (auth middleware not applied), default to RETAIL for safety
-    const effectiveTier = tier ?? CustomerTier.RETAIL;
+      const responseBody = body as Record<string, unknown>;
 
-    // Validate tier authorization for the requested mode (Req 11.9)
-    if (!validateModeAccess(resolvedMode, effectiveTier)) {
-      res.status(403).json({
-        error: 'mode_not_available',
-        mode: resolvedMode,
-        tier: effectiveTier,
-        message: `Response mode "${resolvedMode}" is not available for tier "${effectiveTier}"`,
-      });
-      return;
-    }
+      // Don't filter error responses (they have an 'error' field)
+      if ('error' in responseBody) {
+        return originalJson(body);
+      }
 
-    // Attach the resolved mode to the request for downstream handlers
-    (req as unknown as Record<string, unknown>).responseMode = resolvedMode;
+      const tier = (_req as Request).tier as CustomerTier | undefined;
+      const anonymous = (_req as Request).anonymous ?? false;
+
+      // If the response has a 'data' field (envelope format), filter the data portion
+      if ('data' in responseBody && typeof responseBody.data === 'object' && responseBody.data !== null) {
+        const filteredData = filterResponse(
+          responseBody.data as Record<string, unknown>,
+          tier,
+          anonymous,
+        );
+        return originalJson({ ...responseBody, data: filteredData });
+      }
+
+      // Otherwise filter the top-level response
+      const filtered = filterResponse(responseBody, tier, anonymous);
+      return originalJson(filtered);
+    };
 
     next();
   };
@@ -231,27 +172,13 @@ export function createResponseFilter(): ResponseModeRouter {
  */
 function pickFields(
   source: Record<string, unknown>,
-  fields: ModeFieldSet,
+  fields: string[],
 ): Record<string, unknown> {
   const result: Record<string, unknown> = {};
   for (const field of fields) {
     if (field in source) {
       result[field] = source[field];
     }
-  }
-  return result;
-}
-
-/**
- * Strips retail-restricted fields (raw vectors/similarity matrices) from a response.
- * Implements Req 11.1: Retail MUST NOT receive raw vectors or similarity matrices.
- */
-function stripRetailRestrictedFields(
-  response: Record<string, unknown>,
-): Record<string, unknown> {
-  const result = { ...response };
-  for (const field of RETAIL_RESTRICTED_FIELDS) {
-    delete result[field];
   }
   return result;
 }

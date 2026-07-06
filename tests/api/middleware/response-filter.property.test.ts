@@ -1,51 +1,53 @@
 /**
  * Property-Based Test: Tier-Based Response Filtering
  *
- * Property 14: Tier-Based Response Filtering
- * - Generate random full forecast responses and random customer tiers
- * - Assert: filtered response contains only fields authorised for that tier
- * - Assert: retail never receives raw vectors or similarity matrices
- * - Assert: developer receives probability vectors and similarity scores
- * - Assert: research receives full historical distributions
+ * Property: For any random full response and any customer tier,
+ * the filtered response contains ONLY fields authorised for that tier.
  *
- * **Validates: Requirements 11.1, 11.2, 11.3**
+ * **Validates: Requirements 4.1, 4.2, 4.3, 4.4, 4.5, 4.6**
  */
 
 import { describe, it, expect } from 'vitest';
 import * as fc from 'fast-check';
-import { filterResponse, validateModeAccess } from '../../../src/api/middleware/response-filter.js';
-import { ResponseMode, CustomerTier } from '../../../src/types/enums.js';
+import { filterResponse } from '../../../src/api/middleware/response-filter.js';
+import { CustomerTier } from '../../../src/types/enums.js';
 
 // =============================================================================
 // Constants
 // =============================================================================
 
-/** Fields restricted from retail tier (Req 11.1). */
-const RETAIL_RESTRICTED_FIELDS = ['state_layers', 'layer_breakdown', 'similarity_matches'] as const;
-
-/** Forecast mode fields. */
-const FORECAST_FIELDS = ['direction_probabilities', 'expected_move_pips', 'confidence_final'] as const;
-
-/** Trade mode fields. */
-const TRADE_FIELDS = ['tradeability_score', 'tradeability_label', 'execution_metrics'] as const;
-
-/** Explain mode fields (forecast + explanation). */
-const EXPLAIN_FIELDS = [...FORECAST_FIELDS, 'match_explanation', 'contributing_factors'] as const;
-
-/** Research-specific fields. */
-const RESEARCH_FIELDS = ['historical_distributions', 'time_series_data'] as const;
-
-/** All known fields that can appear in a full response. */
-const ALL_FIELDS = [
-  ...FORECAST_FIELDS,
-  ...TRADE_FIELDS,
-  'match_explanation',
-  'contributing_factors',
-  ...RETAIL_RESTRICTED_FIELDS,
-  ...RESEARCH_FIELDS,
-  'asset',
-  'batch_id',
+/** RETAIL tier allowed fields (Req 4.1). */
+const RETAIL_FIELDS = [
+  'direction_probabilities', 'expected_move_pips', 'confidence_final',
+  'tradeability_score', 'tradeability_label', 'forecast_valid_until',
 ] as const;
+
+/** DEVELOPER additional fields (Req 4.2). */
+const DEVELOPER_ADDITIONAL_FIELDS = [
+  'state_layers', 'layer_breakdown', 'similarity_matches',
+  'match_explanation', 'contributing_factors', 'execution_metrics',
+] as const;
+
+/** RESEARCH additional fields (Req 4.3). */
+const RESEARCH_ADDITIONAL_FIELDS = [
+  'historical_distributions', 'time_series_data', 'research_metadata',
+] as const;
+
+/** Internal-only fields excluded from all non-INTERNAL tiers (Req 4.3). */
+const INTERNAL_ONLY_FIELDS = [
+  'trace_id_internal', 'pipeline_debug', 'raw_engine_logs',
+] as const;
+
+/** Anonymous fields — most restrictive. */
+const ANONYMOUS_FIELDS = [
+  'confidence_final', 'direction_probabilities', 'tradeability_label',
+] as const;
+
+/** Combined DEVELOPER allowed fields. */
+const DEVELOPER_FIELDS = [...RETAIL_FIELDS, ...DEVELOPER_ADDITIONAL_FIELDS] as const;
+
+/** Combined RESEARCH allowed fields. */
+const RESEARCH_FIELDS = [...DEVELOPER_FIELDS, ...RESEARCH_ADDITIONAL_FIELDS] as const;
 
 // =============================================================================
 // Arbitraries
@@ -56,17 +58,7 @@ const arbCustomerTier: fc.Arbitrary<CustomerTier> = fc.constantFrom(
   CustomerTier.RETAIL,
   CustomerTier.DEVELOPER,
   CustomerTier.RESEARCH,
-  CustomerTier.INTEGRATOR,
   CustomerTier.INTERNAL,
-);
-
-/** Generates an arbitrary ResponseMode value. */
-const arbResponseMode: fc.Arbitrary<ResponseMode> = fc.constantFrom(
-  ResponseMode.FORECAST,
-  ResponseMode.TRADE,
-  ResponseMode.EXPLAIN,
-  ResponseMode.RAW,
-  ResponseMode.RESEARCH,
 );
 
 /**
@@ -74,7 +66,7 @@ const arbResponseMode: fc.Arbitrary<ResponseMode> = fc.constantFrom(
  * with random data values.
  */
 const arbFullResponse: fc.Arbitrary<Record<string, unknown>> = fc.record({
-  // Forecast fields
+  // RETAIL fields
   direction_probabilities: fc.record({
     up: fc.double({ min: 0, max: 1, noNaN: true, noDefaultInfinity: true }),
     down: fc.double({ min: 0, max: 1, noNaN: true, noDefaultInfinity: true }),
@@ -82,22 +74,10 @@ const arbFullResponse: fc.Arbitrary<Record<string, unknown>> = fc.record({
   }),
   expected_move_pips: fc.double({ min: -100, max: 100, noNaN: true, noDefaultInfinity: true }),
   confidence_final: fc.double({ min: 0, max: 1, noNaN: true, noDefaultInfinity: true }),
-  // Trade fields
   tradeability_score: fc.double({ min: 0, max: 1, noNaN: true, noDefaultInfinity: true }),
   tradeability_label: fc.constantFrom('GO', 'CONDITIONAL', 'NO_GO'),
-  execution_metrics: fc.record({
-    spread_penalty: fc.constantFrom('low', 'medium', 'high'),
-    session_alignment: fc.constantFrom('optimal', 'suboptimal', 'poor'),
-    news_buffer_status: fc.constantFrom('clear', 'warning', 'blocked'),
-  }),
-  // Explain fields
-  match_explanation: fc.record({
-    matched_layers: fc.array(fc.string({ minLength: 1, maxLength: 20 }), { minLength: 0, maxLength: 3 }),
-    mismatched_layers: fc.array(fc.string({ minLength: 1, maxLength: 20 }), { minLength: 0, maxLength: 3 }),
-    primary_match_reason: fc.string({ minLength: 1, maxLength: 50 }),
-  }),
-  contributing_factors: fc.array(fc.string({ minLength: 1, maxLength: 30 }), { minLength: 1, maxLength: 5 }),
-  // Raw/restricted fields (vectors and matrices)
+  forecast_valid_until: fc.constant('2025-01-15T12:00:00Z'),
+  // DEVELOPER additional fields
   state_layers: fc.record({
     market_structure: fc.array(fc.double({ min: 0, max: 1, noNaN: true, noDefaultInfinity: true }), { minLength: 2, maxLength: 5 }),
     volatility_profile: fc.array(fc.double({ min: 0, max: 1, noNaN: true, noDefaultInfinity: true }), { minLength: 2, maxLength: 5 }),
@@ -113,7 +93,18 @@ const arbFullResponse: fc.Arbitrary<Record<string, unknown>> = fc.record({
     }),
     { minLength: 1, maxLength: 5 },
   ),
-  // Research fields
+  match_explanation: fc.record({
+    matched_layers: fc.array(fc.string({ minLength: 1, maxLength: 20 }), { minLength: 0, maxLength: 3 }),
+    mismatched_layers: fc.array(fc.string({ minLength: 1, maxLength: 20 }), { minLength: 0, maxLength: 3 }),
+    primary_match_reason: fc.string({ minLength: 1, maxLength: 50 }),
+  }),
+  contributing_factors: fc.array(fc.string({ minLength: 1, maxLength: 30 }), { minLength: 1, maxLength: 5 }),
+  execution_metrics: fc.record({
+    spread_penalty: fc.constantFrom('low', 'medium', 'high'),
+    session_alignment: fc.constantFrom('optimal', 'suboptimal', 'poor'),
+    news_buffer_status: fc.constantFrom('clear', 'warning', 'blocked'),
+  }),
+  // RESEARCH additional fields
   historical_distributions: fc.array(
     fc.record({
       month: fc.string({ minLength: 7, maxLength: 7 }),
@@ -128,70 +119,96 @@ const arbFullResponse: fc.Arbitrary<Record<string, unknown>> = fc.record({
     }),
     { minLength: 1, maxLength: 5 },
   ),
-  // Metadata
+  research_metadata: fc.record({
+    model_version: fc.string({ minLength: 1, maxLength: 10 }),
+    training_date: fc.string({ minLength: 10, maxLength: 10 }),
+  }),
+  // INTERNAL-only fields
+  trace_id_internal: fc.string({ minLength: 5, maxLength: 20 }),
+  pipeline_debug: fc.record({
+    step: fc.string({ minLength: 1, maxLength: 20 }),
+    duration_ms: fc.integer({ min: 1, max: 1000 }),
+  }),
+  raw_engine_logs: fc.array(fc.string({ minLength: 1, maxLength: 50 }), { minLength: 1, maxLength: 5 }),
+  // Extra fields not in any tier's allowed set
   asset: fc.constantFrom('EURUSD', 'GBPUSD', 'USDJPY', 'AUDUSD'),
   batch_id: fc.string({ minLength: 5, maxLength: 15 }),
 });
-
-/**
- * Given a tier, generates a mode that the tier is authorised to access.
- */
-function arbAccessibleMode(tier: CustomerTier): fc.Arbitrary<ResponseMode> {
-  const allModes = Object.values(ResponseMode) as ResponseMode[];
-  const accessibleModes = allModes.filter(mode => validateModeAccess(mode, tier));
-  return fc.constantFrom(...accessibleModes);
-}
 
 // =============================================================================
 // Property Tests
 // =============================================================================
 
-describe('Property 14: Tier-Based Response Filtering', () => {
-  it('retail tier NEVER receives state_layers, layer_breakdown, or similarity_matches', () => {
-    fc.assert(
-      fc.property(
-        arbFullResponse,
-        arbAccessibleMode(CustomerTier.RETAIL),
-        (fullResponse, mode) => {
-          const filtered = filterResponse(fullResponse, mode, CustomerTier.RETAIL);
-
-          // Retail must never see restricted fields (Req 11.1)
-          for (const restrictedField of RETAIL_RESTRICTED_FIELDS) {
-            expect(filtered).not.toHaveProperty(restrictedField);
-          }
-        },
-      ),
-      { numRuns: 100 },
-    );
-  });
-
-  it('developer tier in RAW mode receives state_layers, layer_breakdown, and similarity_matches when present in input', () => {
+describe('Property: Tier-Based Response Filtering', () => {
+  it('RETAIL tier returns ONLY the 6 retail-authorised fields (Req 4.1)', () => {
     fc.assert(
       fc.property(arbFullResponse, (fullResponse) => {
-        const filtered = filterResponse(fullResponse, ResponseMode.RAW, CustomerTier.DEVELOPER);
+        const filtered = filterResponse(fullResponse, CustomerTier.RETAIL);
+        const filteredKeys = Object.keys(filtered);
 
-        // Developer in RAW mode should receive all restricted fields (Req 11.2)
-        for (const field of RETAIL_RESTRICTED_FIELDS) {
-          if (field in fullResponse) {
-            expect(filtered).toHaveProperty(field);
-            expect(filtered[field]).toEqual(fullResponse[field]);
-          }
+        // Every key in the result must be in the RETAIL allowed set
+        for (const key of filteredKeys) {
+          expect(RETAIL_FIELDS as readonly string[]).toContain(key);
+        }
+
+        // No developer, research, or internal fields
+        for (const field of DEVELOPER_ADDITIONAL_FIELDS) {
+          expect(filtered).not.toHaveProperty(field);
+        }
+        for (const field of RESEARCH_ADDITIONAL_FIELDS) {
+          expect(filtered).not.toHaveProperty(field);
+        }
+        for (const field of INTERNAL_ONLY_FIELDS) {
+          expect(filtered).not.toHaveProperty(field);
         }
       }),
       { numRuns: 100 },
     );
   });
 
-  it('research tier in RESEARCH mode receives historical_distributions and time_series_data when present in input', () => {
+  it('DEVELOPER tier returns RETAIL + DEVELOPER fields, excludes RESEARCH and INTERNAL (Req 4.2)', () => {
     fc.assert(
       fc.property(arbFullResponse, (fullResponse) => {
-        const filtered = filterResponse(fullResponse, ResponseMode.RESEARCH, CustomerTier.RESEARCH);
+        const filtered = filterResponse(fullResponse, CustomerTier.DEVELOPER);
+        const filteredKeys = Object.keys(filtered);
 
-        // Research tier in RESEARCH mode should see full historical distributions (Req 11.3)
-        for (const field of RESEARCH_FIELDS) {
+        // Every key in the result must be in the DEVELOPER allowed set
+        for (const key of filteredKeys) {
+          expect(DEVELOPER_FIELDS as readonly string[]).toContain(key);
+        }
+
+        // No research or internal fields
+        for (const field of RESEARCH_ADDITIONAL_FIELDS) {
+          expect(filtered).not.toHaveProperty(field);
+        }
+        for (const field of INTERNAL_ONLY_FIELDS) {
+          expect(filtered).not.toHaveProperty(field);
+        }
+      }),
+      { numRuns: 100 },
+    );
+  });
+
+  it('RESEARCH tier returns RETAIL + DEVELOPER + RESEARCH fields, excludes INTERNAL-only fields (Req 4.3)', () => {
+    fc.assert(
+      fc.property(arbFullResponse, (fullResponse) => {
+        const filtered = filterResponse(fullResponse, CustomerTier.RESEARCH);
+        const filteredKeys = Object.keys(filtered);
+
+        // Every key in the result must be in the RESEARCH allowed set
+        for (const key of filteredKeys) {
+          expect(RESEARCH_FIELDS as readonly string[]).toContain(key);
+        }
+
+        // Internal-only fields MUST be excluded
+        for (const field of INTERNAL_ONLY_FIELDS) {
+          expect(filtered).not.toHaveProperty(field);
+        }
+
+        // Research-specific fields MUST be present (they exist in the full response)
+        for (const field of RESEARCH_ADDITIONAL_FIELDS) {
           if (field in fullResponse) {
             expect(filtered).toHaveProperty(field);
-            expect(filtered[field]).toEqual(fullResponse[field]);
           }
         }
       }),
@@ -199,86 +216,89 @@ describe('Property 14: Tier-Based Response Filtering', () => {
     );
   });
 
-  it('forecast mode returns ONLY the 3 core forecast fields (no trade, raw, or research fields)', () => {
+  it('INTERNAL tier returns the complete unfiltered payload (Req 4.4)', () => {
     fc.assert(
-      fc.property(arbFullResponse, arbCustomerTier, (fullResponse, tier) => {
-        // Only test if tier can access forecast mode
-        if (!validateModeAccess(ResponseMode.FORECAST, tier)) return;
+      fc.property(arbFullResponse, (fullResponse) => {
+        const filtered = filterResponse(fullResponse, CustomerTier.INTERNAL);
 
-        const filtered = filterResponse(fullResponse, ResponseMode.FORECAST, tier);
+        // Every key from the source should be in the result
+        expect(Object.keys(filtered).sort()).toEqual(Object.keys(fullResponse).sort());
 
-        // Every key in the filtered result must be a forecast field
-        const filteredKeys = Object.keys(filtered);
-        for (const key of filteredKeys) {
-          expect(FORECAST_FIELDS as readonly string[]).toContain(key);
-        }
-
-        // No trade, raw, or research fields should be present
-        for (const field of TRADE_FIELDS) {
-          expect(filtered).not.toHaveProperty(field);
-        }
-        for (const field of RETAIL_RESTRICTED_FIELDS) {
-          expect(filtered).not.toHaveProperty(field);
-        }
-        for (const field of RESEARCH_FIELDS) {
-          expect(filtered).not.toHaveProperty(field);
+        // Values should be unchanged
+        for (const key of Object.keys(fullResponse)) {
+          expect(filtered[key]).toEqual(fullResponse[key]);
         }
       }),
       { numRuns: 100 },
     );
   });
 
-  it('trade mode returns ONLY the 3 trade fields (no forecast, raw, or research fields)', () => {
+  it('anonymous access returns ONLY confidence_final, direction_probabilities, tradeability_label', () => {
     fc.assert(
-      fc.property(arbFullResponse, arbCustomerTier, (fullResponse, tier) => {
-        // Only test if tier can access trade mode
-        if (!validateModeAccess(ResponseMode.TRADE, tier)) return;
-
-        const filtered = filterResponse(fullResponse, ResponseMode.TRADE, tier);
-
-        // Every key in the filtered result must be a trade field
+      fc.property(arbFullResponse, (fullResponse) => {
+        const filtered = filterResponse(fullResponse, undefined, true);
         const filteredKeys = Object.keys(filtered);
+
+        // Only anonymous fields
         for (const key of filteredKeys) {
-          expect(TRADE_FIELDS as readonly string[]).toContain(key);
+          expect(ANONYMOUS_FIELDS as readonly string[]).toContain(key);
         }
 
-        // No forecast, raw, or research fields should be present
-        for (const field of FORECAST_FIELDS) {
-          expect(filtered).not.toHaveProperty(field);
-        }
-        for (const field of RETAIL_RESTRICTED_FIELDS) {
-          expect(filtered).not.toHaveProperty(field);
-        }
-        for (const field of RESEARCH_FIELDS) {
-          expect(filtered).not.toHaveProperty(field);
-        }
-      }),
-      { numRuns: 100 },
-    );
-  });
-
-  it('filtered response for any tier/mode combination contains only fields authorised for that tier and mode', () => {
-    fc.assert(
-      fc.property(arbFullResponse, arbCustomerTier, (fullResponse, tier) => {
-        // Pick a mode accessible to this tier
-        const accessibleModes = (Object.values(ResponseMode) as ResponseMode[]).filter(
-          mode => validateModeAccess(mode, tier),
-        );
-        // Use the first accessible mode (deterministic per tier)
-        const mode = accessibleModes[0];
-
-        const filtered = filterResponse(fullResponse, mode, tier);
-
-        // Retail must never see restricted fields regardless of mode
-        if (tier === CustomerTier.RETAIL) {
-          for (const field of RETAIL_RESTRICTED_FIELDS) {
-            expect(filtered).not.toHaveProperty(field);
+        // Each anonymous field present in source must appear in result
+        for (const field of ANONYMOUS_FIELDS) {
+          if (field in fullResponse) {
+            expect(filtered).toHaveProperty(field);
           }
         }
+      }),
+      { numRuns: 100 },
+    );
+  });
 
-        // Filtered response should be a subset of the full response (no new keys invented)
+  it('default to RETAIL filtering when tier is undefined (Req 4.6)', () => {
+    fc.assert(
+      fc.property(arbFullResponse, (fullResponse) => {
+        const filteredUndefined = filterResponse(fullResponse, undefined);
+        const filteredRetail = filterResponse(fullResponse, CustomerTier.RETAIL);
+
+        // Should produce identical results
+        expect(filteredUndefined).toEqual(filteredRetail);
+      }),
+      { numRuns: 100 },
+    );
+  });
+
+  it('filtered response is always a subset of the original — no keys invented (Req 4.5)', () => {
+    fc.assert(
+      fc.property(arbFullResponse, arbCustomerTier, (fullResponse, tier) => {
+        const filtered = filterResponse(fullResponse, tier);
+
+        // Every key in the filtered output must exist in the source
         for (const key of Object.keys(filtered)) {
           expect(fullResponse).toHaveProperty(key);
+        }
+      }),
+      { numRuns: 100 },
+    );
+  });
+
+  it('tier hierarchy is monotonically increasing — higher tiers see at least as many fields', () => {
+    fc.assert(
+      fc.property(arbFullResponse, (fullResponse) => {
+        const retailKeys = new Set(Object.keys(filterResponse(fullResponse, CustomerTier.RETAIL)));
+        const devKeys = new Set(Object.keys(filterResponse(fullResponse, CustomerTier.DEVELOPER)));
+        const researchKeys = new Set(Object.keys(filterResponse(fullResponse, CustomerTier.RESEARCH)));
+        const internalKeys = new Set(Object.keys(filterResponse(fullResponse, CustomerTier.INTERNAL)));
+
+        // RETAIL ⊆ DEVELOPER ⊆ RESEARCH ⊆ INTERNAL
+        for (const key of retailKeys) {
+          expect(devKeys.has(key)).toBe(true);
+        }
+        for (const key of devKeys) {
+          expect(researchKeys.has(key)).toBe(true);
+        }
+        for (const key of researchKeys) {
+          expect(internalKeys.has(key)).toBe(true);
         }
       }),
       { numRuns: 100 },

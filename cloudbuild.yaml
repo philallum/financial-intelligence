@@ -3,19 +3,23 @@
 # =============================================================================
 # Builds and deploys both services (batch pipeline + API) to Cloud Run.
 #
-# Substitution variables (set in Cloud Build trigger or CLI):
-#   _REGION: GCP region (default: europe-west2)
-#   _PROJECT_ID: GCP project ID (auto-set by Cloud Build)
+# Infrastructure:
+#   Registry: europe-west1-docker.pkg.dev/$PROJECT_ID/financial-intelligence
+#   Batch: Cloud Run Job "financial-intelligence-batch" (europe-west1)
+#   API: Cloud Run Service "financial-intelligence-api" (europe-west1)
 #
 # Usage:
 #   gcloud builds submit --config=cloudbuild.yaml \
-#     --substitutions=_REGION=europe-west2
+#     --project=financial-intelligence-501107
 #
 # Requirements: 12.1, 12.2, 12.6, 12.7
 # =============================================================================
 
 substitutions:
-  _REGION: 'europe-west2'
+  _REGION: 'europe-west1'
+  _REGISTRY: 'europe-west1-docker.pkg.dev'
+  _REPOSITORY: 'financial-intelligence'
+  _TAG: 'latest'
 
 steps:
   # --- Step 1: Build batch pipeline image ---
@@ -25,9 +29,9 @@ steps:
       - '-f'
       - 'Dockerfile.batch'
       - '-t'
-      - 'gcr.io/${PROJECT_ID}/fip-batch:${SHORT_SHA}'
+      - '${_REGISTRY}/$PROJECT_ID/${_REPOSITORY}/batch:${_TAG}'
       - '-t'
-      - 'gcr.io/${PROJECT_ID}/fip-batch:latest'
+      - '${_REGISTRY}/$PROJECT_ID/${_REPOSITORY}/batch:latest'
       - '.'
     id: 'build-batch'
 
@@ -38,82 +42,73 @@ steps:
       - '-f'
       - 'Dockerfile.api'
       - '-t'
-      - 'gcr.io/${PROJECT_ID}/fip-api:${SHORT_SHA}'
+      - '${_REGISTRY}/$PROJECT_ID/${_REPOSITORY}/api:${_TAG}'
       - '-t'
-      - 'gcr.io/${PROJECT_ID}/fip-api:latest'
+      - '${_REGISTRY}/$PROJECT_ID/${_REPOSITORY}/api:latest'
       - '.'
     id: 'build-api'
 
   # --- Step 3: Push batch image ---
   - name: 'gcr.io/cloud-builders/docker'
-    args: ['push', 'gcr.io/${PROJECT_ID}/fip-batch:${SHORT_SHA}']
+    args: ['push', '${_REGISTRY}/$PROJECT_ID/${_REPOSITORY}/batch:${_TAG}']
     waitFor: ['build-batch']
     id: 'push-batch'
 
   - name: 'gcr.io/cloud-builders/docker'
-    args: ['push', 'gcr.io/${PROJECT_ID}/fip-batch:latest']
+    args: ['push', '${_REGISTRY}/$PROJECT_ID/${_REPOSITORY}/batch:latest']
     waitFor: ['build-batch']
     id: 'push-batch-latest'
 
   # --- Step 4: Push API image ---
   - name: 'gcr.io/cloud-builders/docker'
-    args: ['push', 'gcr.io/${PROJECT_ID}/fip-api:${SHORT_SHA}']
+    args: ['push', '${_REGISTRY}/$PROJECT_ID/${_REPOSITORY}/api:${_TAG}']
     waitFor: ['build-api']
     id: 'push-api'
 
   - name: 'gcr.io/cloud-builders/docker'
-    args: ['push', 'gcr.io/${PROJECT_ID}/fip-api:latest']
+    args: ['push', '${_REGISTRY}/$PROJECT_ID/${_REPOSITORY}/api:latest']
     waitFor: ['build-api']
     id: 'push-api-latest'
 
-  # --- Step 5: Deploy batch service to Cloud Run ---
+  # --- Step 5: Deploy batch Cloud Run Job ---
   - name: 'gcr.io/google.com/cloudsdktool/cloud-sdk'
     entrypoint: 'gcloud'
     args:
       - 'run'
-      - 'deploy'
-      - 'fip-batch'
-      - '--image=gcr.io/${PROJECT_ID}/fip-batch:${SHORT_SHA}'
+      - 'jobs'
+      - 'update'
+      - 'financial-intelligence-batch'
+      - '--image=${_REGISTRY}/$PROJECT_ID/${_REPOSITORY}/batch:${_TAG}'
       - '--region=${_REGION}'
-      - '--platform=managed'
-      - '--no-allow-unauthenticated'
-      - '--max-instances=1'
-      - '--min-instances=0'
-      - '--memory=512Mi'
+      - '--memory=1Gi'
       - '--cpu=1'
-      - '--timeout=900'
-      - '--concurrency=1'
-      - '--no-cpu-throttling'
-      - '--set-env-vars=NODE_ENV=production'
+      - '--task-timeout=900s'
+      - '--max-retries=1'
+      - '--parallelism=1'
+      - '--tasks=1'
     waitFor: ['push-batch', 'push-batch-latest']
     id: 'deploy-batch'
 
-  # --- Step 6: Deploy API service to Cloud Run ---
+  # --- Step 6: Deploy API Cloud Run Service ---
+  # Note: Only update the image. Env vars (including secrets) are managed
+  # via the Cloud Run console or gcloud run services update directly.
   - name: 'gcr.io/google.com/cloudsdktool/cloud-sdk'
     entrypoint: 'gcloud'
     args:
       - 'run'
-      - 'deploy'
-      - 'fip-api'
-      - '--image=gcr.io/${PROJECT_ID}/fip-api:${SHORT_SHA}'
+      - 'services'
+      - 'update'
+      - 'financial-intelligence-api'
+      - '--image=${_REGISTRY}/$PROJECT_ID/${_REPOSITORY}/api:${_TAG}'
       - '--region=${_REGION}'
-      - '--platform=managed'
-      - '--allow-unauthenticated'
-      - '--max-instances=2'
-      - '--min-instances=0'
-      - '--memory=256Mi'
-      - '--cpu=1'
-      - '--timeout=60'
-      - '--concurrency=80'
-      - '--set-env-vars=NODE_ENV=production'
     waitFor: ['push-api', 'push-api-latest']
     id: 'deploy-api'
 
 images:
-  - 'gcr.io/${PROJECT_ID}/fip-batch:${SHORT_SHA}'
-  - 'gcr.io/${PROJECT_ID}/fip-batch:latest'
-  - 'gcr.io/${PROJECT_ID}/fip-api:${SHORT_SHA}'
-  - 'gcr.io/${PROJECT_ID}/fip-api:latest'
+  - '${_REGISTRY}/$PROJECT_ID/${_REPOSITORY}/batch:${_TAG}'
+  - '${_REGISTRY}/$PROJECT_ID/${_REPOSITORY}/batch:latest'
+  - '${_REGISTRY}/$PROJECT_ID/${_REPOSITORY}/api:${_TAG}'
+  - '${_REGISTRY}/$PROJECT_ID/${_REPOSITORY}/api:latest'
 
 options:
   logging: CLOUD_LOGGING_ONLY

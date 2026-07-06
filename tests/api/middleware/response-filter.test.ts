@@ -1,25 +1,23 @@
 /**
- * Tests for the Response Mode Filter Middleware.
+ * Tests for the Tier-Based Response Filter Middleware.
  *
  * Validates:
- * - Mode resolution and defaults (Req 11.12)
- * - MODE_ACCESS matrix enforcement (Req 11.8, 11.9)
- * - Field stripping per mode (Req 11.8)
- * - Retail tier field restrictions (Req 11.1)
- * - Middleware integration behavior
+ * - Tier-based field filtering (Req 4.1, 4.2, 4.3, 4.4)
+ * - Response filter strips restricted fields before serialisation (Req 4.5)
+ * - Default to RETAIL filtering when tier is missing (Req 4.6)
+ * - Anonymous access returns minimal fields
+ * - Middleware intercepts res.json correctly
  *
- * Requirements: 11.1, 11.2, 11.3, 11.8, 11.9, 11.10, 11.12
+ * Requirements: 4.1, 4.2, 4.3, 4.4, 4.5, 4.6
  */
 
 import { describe, it, expect, vi } from 'vitest';
 import type { Request, Response, NextFunction } from 'express';
 import {
-  resolveMode,
-  validateModeAccess,
   filterResponse,
   createResponseFilter,
 } from '../../../src/api/middleware/response-filter.js';
-import { ResponseMode, CustomerTier } from '../../../src/types/enums.js';
+import { CustomerTier } from '../../../src/types/enums.js';
 
 // =============================================================================
 // Test Fixtures
@@ -27,431 +25,447 @@ import { ResponseMode, CustomerTier } from '../../../src/types/enums.js';
 
 /** A full response containing all possible fields for testing field stripping. */
 const FULL_RESPONSE: Record<string, unknown> = {
-  // Forecast fields
+  // RETAIL fields
   direction_probabilities: { up: 0.55, down: 0.30, flat: 0.15 },
   expected_move_pips: 12.5,
   confidence_final: 0.68,
-  // Trade fields
   tradeability_score: 0.82,
   tradeability_label: 'GO',
-  execution_metrics: { spread_penalty: 'low', session_alignment: 'optimal', news_buffer_status: 'clear' },
-  // Explain fields
-  match_explanation: { matched_layers: ['market_structure'], mismatched_layers: [], primary_match_reason: 'similar structure' },
-  contributing_factors: ['trend_alignment', 'volatility_match'],
-  // Raw fields (vectors/matrices)
+  forecast_valid_until: '2025-01-15T12:00:00Z',
+  // DEVELOPER additional fields
   state_layers: { market_structure: [0.1, 0.2], volatility_profile: [0.3, 0.4] },
   layer_breakdown: { market_structure: 0.95, volatility: 0.88 },
   similarity_matches: [{ fingerprint_id: 'fp-1', similarity_score: 0.95 }],
-  // Research fields
+  match_explanation: { matched_layers: ['market_structure'], mismatched_layers: [], primary_match_reason: 'similar structure' },
+  contributing_factors: ['trend_alignment', 'volatility_match'],
+  execution_metrics: { spread_penalty: 'low', session_alignment: 'optimal', news_buffer_status: 'clear' },
+  // RESEARCH additional fields
   historical_distributions: [{ month: '2024-01', data: [1, 2, 3] }],
   time_series_data: [{ timestamp: '2024-01-01', value: 1.05 }],
-  // Metadata
+  research_metadata: { model_version: '2.1', training_date: '2024-12-01' },
+  // INTERNAL-only fields
+  trace_id_internal: 'trace-abc-123',
+  pipeline_debug: { step: 'similarity', duration_ms: 45 },
+  raw_engine_logs: ['log entry 1', 'log entry 2'],
+  // Other fields not in any tier's allowed set
   asset: 'EURUSD',
   batch_id: 'batch-001',
 };
 
 // =============================================================================
-// resolveMode Tests (Req 11.12)
+// filterResponse Tests — Anonymous Access
 // =============================================================================
 
-describe('resolveMode', () => {
-  it('defaults to FORECAST when parameter is undefined', () => {
-    expect(resolveMode(undefined)).toBe(ResponseMode.FORECAST);
+describe('filterResponse — anonymous access', () => {
+  it('returns only confidence_final, direction_probabilities, tradeability_label', () => {
+    const result = filterResponse(FULL_RESPONSE, undefined, true);
+
+    expect(result).toEqual({
+      confidence_final: 0.68,
+      direction_probabilities: { up: 0.55, down: 0.30, flat: 0.15 },
+      tradeability_label: 'GO',
+    });
   });
 
-  it('defaults to FORECAST when parameter is null', () => {
-    expect(resolveMode(null)).toBe(ResponseMode.FORECAST);
+  it('excludes all non-anonymous fields', () => {
+    const result = filterResponse(FULL_RESPONSE, CustomerTier.INTERNAL, true);
+
+    // Anonymous flag takes precedence over tier
+    expect(Object.keys(result)).toHaveLength(3);
+    expect(result).not.toHaveProperty('expected_move_pips');
+    expect(result).not.toHaveProperty('state_layers');
+    expect(result).not.toHaveProperty('historical_distributions');
+    expect(result).not.toHaveProperty('trace_id_internal');
   });
 
-  it('defaults to FORECAST when parameter is empty string', () => {
-    expect(resolveMode('')).toBe(ResponseMode.FORECAST);
-  });
-
-  it('defaults to FORECAST when parameter is whitespace only', () => {
-    expect(resolveMode('   ')).toBe(ResponseMode.FORECAST);
-  });
-
-  it('resolves "forecast" (lowercase) to FORECAST', () => {
-    expect(resolveMode('forecast')).toBe(ResponseMode.FORECAST);
-  });
-
-  it('resolves "TRADE" (uppercase) to TRADE', () => {
-    expect(resolveMode('TRADE')).toBe(ResponseMode.TRADE);
-  });
-
-  it('resolves "explain" (lowercase) to EXPLAIN', () => {
-    expect(resolveMode('explain')).toBe(ResponseMode.EXPLAIN);
-  });
-
-  it('resolves "Raw" (mixed case) to RAW', () => {
-    expect(resolveMode('Raw')).toBe(ResponseMode.RAW);
-  });
-
-  it('resolves "research" to RESEARCH', () => {
-    expect(resolveMode('research')).toBe(ResponseMode.RESEARCH);
-  });
-
-  it('defaults to FORECAST for invalid mode string', () => {
-    expect(resolveMode('invalid')).toBe(ResponseMode.FORECAST);
-  });
-
-  it('trims whitespace before resolving', () => {
-    expect(resolveMode('  trade  ')).toBe(ResponseMode.TRADE);
+  it('handles empty response', () => {
+    const result = filterResponse({}, undefined, true);
+    expect(result).toEqual({});
   });
 });
 
 // =============================================================================
-// validateModeAccess Tests (Req 11.9)
+// filterResponse Tests — RETAIL Tier (Req 4.1)
 // =============================================================================
 
-describe('validateModeAccess', () => {
-  describe('RETAIL tier', () => {
-    it('allows forecast mode', () => {
-      expect(validateModeAccess(ResponseMode.FORECAST, CustomerTier.RETAIL)).toBe(true);
-    });
+describe('filterResponse — RETAIL tier (Req 4.1)', () => {
+  it('returns the 6 retail-authorised fields', () => {
+    const result = filterResponse(FULL_RESPONSE, CustomerTier.RETAIL);
 
-    it('allows trade mode', () => {
-      expect(validateModeAccess(ResponseMode.TRADE, CustomerTier.RETAIL)).toBe(true);
-    });
-
-    it('rejects explain mode', () => {
-      expect(validateModeAccess(ResponseMode.EXPLAIN, CustomerTier.RETAIL)).toBe(false);
-    });
-
-    it('rejects raw mode', () => {
-      expect(validateModeAccess(ResponseMode.RAW, CustomerTier.RETAIL)).toBe(false);
-    });
-
-    it('rejects research mode', () => {
-      expect(validateModeAccess(ResponseMode.RESEARCH, CustomerTier.RETAIL)).toBe(false);
+    expect(result).toEqual({
+      direction_probabilities: { up: 0.55, down: 0.30, flat: 0.15 },
+      expected_move_pips: 12.5,
+      confidence_final: 0.68,
+      tradeability_score: 0.82,
+      tradeability_label: 'GO',
+      forecast_valid_until: '2025-01-15T12:00:00Z',
     });
   });
 
-  describe('DEVELOPER tier', () => {
-    it('allows forecast mode', () => {
-      expect(validateModeAccess(ResponseMode.FORECAST, CustomerTier.DEVELOPER)).toBe(true);
-    });
+  it('excludes developer fields', () => {
+    const result = filterResponse(FULL_RESPONSE, CustomerTier.RETAIL);
 
-    it('allows trade mode', () => {
-      expect(validateModeAccess(ResponseMode.TRADE, CustomerTier.DEVELOPER)).toBe(true);
-    });
-
-    it('allows explain mode', () => {
-      expect(validateModeAccess(ResponseMode.EXPLAIN, CustomerTier.DEVELOPER)).toBe(true);
-    });
-
-    it('allows raw mode', () => {
-      expect(validateModeAccess(ResponseMode.RAW, CustomerTier.DEVELOPER)).toBe(true);
-    });
-
-    it('rejects research mode', () => {
-      expect(validateModeAccess(ResponseMode.RESEARCH, CustomerTier.DEVELOPER)).toBe(false);
-    });
+    expect(result).not.toHaveProperty('state_layers');
+    expect(result).not.toHaveProperty('layer_breakdown');
+    expect(result).not.toHaveProperty('similarity_matches');
+    expect(result).not.toHaveProperty('match_explanation');
+    expect(result).not.toHaveProperty('contributing_factors');
+    expect(result).not.toHaveProperty('execution_metrics');
   });
 
-  describe('RESEARCH tier', () => {
-    it('allows all modes including research', () => {
-      expect(validateModeAccess(ResponseMode.FORECAST, CustomerTier.RESEARCH)).toBe(true);
-      expect(validateModeAccess(ResponseMode.TRADE, CustomerTier.RESEARCH)).toBe(true);
-      expect(validateModeAccess(ResponseMode.EXPLAIN, CustomerTier.RESEARCH)).toBe(true);
-      expect(validateModeAccess(ResponseMode.RAW, CustomerTier.RESEARCH)).toBe(true);
-      expect(validateModeAccess(ResponseMode.RESEARCH, CustomerTier.RESEARCH)).toBe(true);
-    });
+  it('excludes research fields', () => {
+    const result = filterResponse(FULL_RESPONSE, CustomerTier.RETAIL);
+
+    expect(result).not.toHaveProperty('historical_distributions');
+    expect(result).not.toHaveProperty('time_series_data');
+    expect(result).not.toHaveProperty('research_metadata');
   });
 
-  describe('INTEGRATOR tier', () => {
-    it('allows all modes including research', () => {
-      expect(validateModeAccess(ResponseMode.FORECAST, CustomerTier.INTEGRATOR)).toBe(true);
-      expect(validateModeAccess(ResponseMode.TRADE, CustomerTier.INTEGRATOR)).toBe(true);
-      expect(validateModeAccess(ResponseMode.EXPLAIN, CustomerTier.INTEGRATOR)).toBe(true);
-      expect(validateModeAccess(ResponseMode.RAW, CustomerTier.INTEGRATOR)).toBe(true);
-      expect(validateModeAccess(ResponseMode.RESEARCH, CustomerTier.INTEGRATOR)).toBe(true);
-    });
-  });
+  it('excludes internal-only fields', () => {
+    const result = filterResponse(FULL_RESPONSE, CustomerTier.RETAIL);
 
-  describe('INTERNAL tier', () => {
-    it('allows all modes including research', () => {
-      expect(validateModeAccess(ResponseMode.FORECAST, CustomerTier.INTERNAL)).toBe(true);
-      expect(validateModeAccess(ResponseMode.TRADE, CustomerTier.INTERNAL)).toBe(true);
-      expect(validateModeAccess(ResponseMode.EXPLAIN, CustomerTier.INTERNAL)).toBe(true);
-      expect(validateModeAccess(ResponseMode.RAW, CustomerTier.INTERNAL)).toBe(true);
-      expect(validateModeAccess(ResponseMode.RESEARCH, CustomerTier.INTERNAL)).toBe(true);
-    });
+    expect(result).not.toHaveProperty('trace_id_internal');
+    expect(result).not.toHaveProperty('pipeline_debug');
+    expect(result).not.toHaveProperty('raw_engine_logs');
   });
 });
 
 // =============================================================================
-// filterResponse Tests (Req 11.1, 11.8)
+// filterResponse Tests — DEVELOPER Tier (Req 4.2)
 // =============================================================================
 
-describe('filterResponse', () => {
-  describe('forecast mode', () => {
-    it('returns only forecast fields', () => {
-      const result = filterResponse(FULL_RESPONSE, ResponseMode.FORECAST, CustomerTier.DEVELOPER);
+describe('filterResponse — DEVELOPER tier (Req 4.2)', () => {
+  it('returns retail fields plus developer-additional fields (12 total)', () => {
+    const result = filterResponse(FULL_RESPONSE, CustomerTier.DEVELOPER);
 
-      expect(result).toEqual({
-        direction_probabilities: { up: 0.55, down: 0.30, flat: 0.15 },
-        expected_move_pips: 12.5,
-        confidence_final: 0.68,
-      });
-    });
-
-    it('excludes trade, explain, raw, and research fields', () => {
-      const result = filterResponse(FULL_RESPONSE, ResponseMode.FORECAST, CustomerTier.DEVELOPER);
-
-      expect(result).not.toHaveProperty('tradeability_score');
-      expect(result).not.toHaveProperty('match_explanation');
-      expect(result).not.toHaveProperty('state_layers');
-      expect(result).not.toHaveProperty('historical_distributions');
-    });
-  });
-
-  describe('trade mode', () => {
-    it('returns only trade fields', () => {
-      const result = filterResponse(FULL_RESPONSE, ResponseMode.TRADE, CustomerTier.DEVELOPER);
-
-      expect(result).toEqual({
-        tradeability_score: 0.82,
-        tradeability_label: 'GO',
-        execution_metrics: { spread_penalty: 'low', session_alignment: 'optimal', news_buffer_status: 'clear' },
-      });
-    });
-
-    it('excludes forecast and raw fields', () => {
-      const result = filterResponse(FULL_RESPONSE, ResponseMode.TRADE, CustomerTier.DEVELOPER);
-
-      expect(result).not.toHaveProperty('direction_probabilities');
-      expect(result).not.toHaveProperty('state_layers');
+    expect(result).toEqual({
+      // RETAIL fields
+      direction_probabilities: { up: 0.55, down: 0.30, flat: 0.15 },
+      expected_move_pips: 12.5,
+      confidence_final: 0.68,
+      tradeability_score: 0.82,
+      tradeability_label: 'GO',
+      forecast_valid_until: '2025-01-15T12:00:00Z',
+      // DEVELOPER additional fields
+      state_layers: { market_structure: [0.1, 0.2], volatility_profile: [0.3, 0.4] },
+      layer_breakdown: { market_structure: 0.95, volatility: 0.88 },
+      similarity_matches: [{ fingerprint_id: 'fp-1', similarity_score: 0.95 }],
+      match_explanation: { matched_layers: ['market_structure'], mismatched_layers: [], primary_match_reason: 'similar structure' },
+      contributing_factors: ['trend_alignment', 'volatility_match'],
+      execution_metrics: { spread_penalty: 'low', session_alignment: 'optimal', news_buffer_status: 'clear' },
     });
   });
 
-  describe('explain mode', () => {
-    it('returns forecast fields plus explanation fields', () => {
-      const result = filterResponse(FULL_RESPONSE, ResponseMode.EXPLAIN, CustomerTier.DEVELOPER);
+  it('excludes research fields', () => {
+    const result = filterResponse(FULL_RESPONSE, CustomerTier.DEVELOPER);
 
-      expect(result).toEqual({
-        direction_probabilities: { up: 0.55, down: 0.30, flat: 0.15 },
-        expected_move_pips: 12.5,
-        confidence_final: 0.68,
-        match_explanation: { matched_layers: ['market_structure'], mismatched_layers: [], primary_match_reason: 'similar structure' },
-        contributing_factors: ['trend_alignment', 'volatility_match'],
-      });
-    });
-
-    it('excludes raw vectors and trade fields', () => {
-      const result = filterResponse(FULL_RESPONSE, ResponseMode.EXPLAIN, CustomerTier.DEVELOPER);
-
-      expect(result).not.toHaveProperty('state_layers');
-      expect(result).not.toHaveProperty('tradeability_score');
-    });
+    expect(result).not.toHaveProperty('historical_distributions');
+    expect(result).not.toHaveProperty('time_series_data');
+    expect(result).not.toHaveProperty('research_metadata');
   });
 
-  describe('raw mode', () => {
-    it('returns all fields for non-retail tiers', () => {
-      const result = filterResponse(FULL_RESPONSE, ResponseMode.RAW, CustomerTier.DEVELOPER);
+  it('excludes internal-only fields', () => {
+    const result = filterResponse(FULL_RESPONSE, CustomerTier.DEVELOPER);
 
-      expect(result).toHaveProperty('direction_probabilities');
-      expect(result).toHaveProperty('state_layers');
-      expect(result).toHaveProperty('layer_breakdown');
-      expect(result).toHaveProperty('similarity_matches');
-      expect(result).toHaveProperty('match_explanation');
-    });
-  });
-
-  describe('research mode', () => {
-    it('returns all fields including historical data', () => {
-      const result = filterResponse(FULL_RESPONSE, ResponseMode.RESEARCH, CustomerTier.RESEARCH);
-
-      expect(result).toHaveProperty('historical_distributions');
-      expect(result).toHaveProperty('time_series_data');
-      expect(result).toHaveProperty('state_layers');
-      expect(result).toHaveProperty('direction_probabilities');
-    });
-  });
-
-  describe('retail tier field stripping (Req 11.1)', () => {
-    it('strips state_layers from retail forecast response', () => {
-      const responseWithLayers = {
-        ...FULL_RESPONSE,
-      };
-      const result = filterResponse(responseWithLayers, ResponseMode.FORECAST, CustomerTier.RETAIL);
-
-      expect(result).not.toHaveProperty('state_layers');
-    });
-
-    it('strips layer_breakdown from retail trade response', () => {
-      const result = filterResponse(FULL_RESPONSE, ResponseMode.TRADE, CustomerTier.RETAIL);
-
-      expect(result).not.toHaveProperty('layer_breakdown');
-    });
-
-    it('strips similarity_matches from retail responses', () => {
-      const result = filterResponse(FULL_RESPONSE, ResponseMode.FORECAST, CustomerTier.RETAIL);
-
-      expect(result).not.toHaveProperty('similarity_matches');
-    });
-
-    it('does not strip restricted fields for developer tier', () => {
-      const result = filterResponse(FULL_RESPONSE, ResponseMode.RAW, CustomerTier.DEVELOPER);
-
-      expect(result).toHaveProperty('state_layers');
-      expect(result).toHaveProperty('layer_breakdown');
-      expect(result).toHaveProperty('similarity_matches');
-    });
-  });
-
-  describe('edge cases', () => {
-    it('handles empty response object gracefully', () => {
-      const result = filterResponse({}, ResponseMode.FORECAST, CustomerTier.RETAIL);
-      expect(result).toEqual({});
-    });
-
-    it('handles response with missing fields (returns only those present)', () => {
-      const partial = { direction_probabilities: { up: 0.5, down: 0.3, flat: 0.2 } };
-      const result = filterResponse(partial, ResponseMode.FORECAST, CustomerTier.DEVELOPER);
-
-      expect(result).toEqual({ direction_probabilities: { up: 0.5, down: 0.3, flat: 0.2 } });
-      expect(result).not.toHaveProperty('expected_move_pips');
-    });
+    expect(result).not.toHaveProperty('trace_id_internal');
+    expect(result).not.toHaveProperty('pipeline_debug');
+    expect(result).not.toHaveProperty('raw_engine_logs');
   });
 });
 
 // =============================================================================
-// createResponseFilter Middleware Tests (Req 11.9, 11.12)
+// filterResponse Tests — RESEARCH Tier (Req 4.3)
+// =============================================================================
+
+describe('filterResponse — RESEARCH tier (Req 4.3)', () => {
+  it('returns retail + developer + research fields (15 total)', () => {
+    const result = filterResponse(FULL_RESPONSE, CustomerTier.RESEARCH);
+
+    expect(result).toEqual({
+      // RETAIL fields
+      direction_probabilities: { up: 0.55, down: 0.30, flat: 0.15 },
+      expected_move_pips: 12.5,
+      confidence_final: 0.68,
+      tradeability_score: 0.82,
+      tradeability_label: 'GO',
+      forecast_valid_until: '2025-01-15T12:00:00Z',
+      // DEVELOPER additional fields
+      state_layers: { market_structure: [0.1, 0.2], volatility_profile: [0.3, 0.4] },
+      layer_breakdown: { market_structure: 0.95, volatility: 0.88 },
+      similarity_matches: [{ fingerprint_id: 'fp-1', similarity_score: 0.95 }],
+      match_explanation: { matched_layers: ['market_structure'], mismatched_layers: [], primary_match_reason: 'similar structure' },
+      contributing_factors: ['trend_alignment', 'volatility_match'],
+      execution_metrics: { spread_penalty: 'low', session_alignment: 'optimal', news_buffer_status: 'clear' },
+      // RESEARCH additional fields
+      historical_distributions: [{ month: '2024-01', data: [1, 2, 3] }],
+      time_series_data: [{ timestamp: '2024-01-01', value: 1.05 }],
+      research_metadata: { model_version: '2.1', training_date: '2024-12-01' },
+    });
+  });
+
+  it('excludes internal-only fields (trace_id_internal, pipeline_debug, raw_engine_logs)', () => {
+    const result = filterResponse(FULL_RESPONSE, CustomerTier.RESEARCH);
+
+    expect(result).not.toHaveProperty('trace_id_internal');
+    expect(result).not.toHaveProperty('pipeline_debug');
+    expect(result).not.toHaveProperty('raw_engine_logs');
+  });
+});
+
+// =============================================================================
+// filterResponse Tests — INTERNAL Tier (Req 4.4)
+// =============================================================================
+
+describe('filterResponse — INTERNAL tier (Req 4.4)', () => {
+  it('returns the complete unfiltered payload', () => {
+    const result = filterResponse(FULL_RESPONSE, CustomerTier.INTERNAL);
+
+    // Should contain every key from FULL_RESPONSE
+    expect(Object.keys(result).sort()).toEqual(Object.keys(FULL_RESPONSE).sort());
+  });
+
+  it('includes internal-only fields', () => {
+    const result = filterResponse(FULL_RESPONSE, CustomerTier.INTERNAL);
+
+    expect(result).toHaveProperty('trace_id_internal', 'trace-abc-123');
+    expect(result).toHaveProperty('pipeline_debug');
+    expect(result).toHaveProperty('raw_engine_logs');
+  });
+
+  it('includes all other tier fields', () => {
+    const result = filterResponse(FULL_RESPONSE, CustomerTier.INTERNAL);
+
+    expect(result).toHaveProperty('direction_probabilities');
+    expect(result).toHaveProperty('state_layers');
+    expect(result).toHaveProperty('historical_distributions');
+    expect(result).toHaveProperty('research_metadata');
+  });
+});
+
+// =============================================================================
+// filterResponse Tests — Default to RETAIL (Req 4.6)
+// =============================================================================
+
+describe('filterResponse — default to RETAIL when tier missing (Req 4.6)', () => {
+  it('applies RETAIL filtering when tier is undefined', () => {
+    const result = filterResponse(FULL_RESPONSE, undefined);
+
+    expect(result).toEqual({
+      direction_probabilities: { up: 0.55, down: 0.30, flat: 0.15 },
+      expected_move_pips: 12.5,
+      confidence_final: 0.68,
+      tradeability_score: 0.82,
+      tradeability_label: 'GO',
+      forecast_valid_until: '2025-01-15T12:00:00Z',
+    });
+  });
+
+  it('excludes developer and research fields when tier is undefined', () => {
+    const result = filterResponse(FULL_RESPONSE, undefined);
+
+    expect(result).not.toHaveProperty('state_layers');
+    expect(result).not.toHaveProperty('historical_distributions');
+    expect(result).not.toHaveProperty('trace_id_internal');
+  });
+});
+
+// =============================================================================
+// filterResponse Tests — Edge Cases
+// =============================================================================
+
+describe('filterResponse — edge cases', () => {
+  it('handles empty response object', () => {
+    const result = filterResponse({}, CustomerTier.RETAIL);
+    expect(result).toEqual({});
+  });
+
+  it('returns only fields that exist in the source', () => {
+    const partial = { direction_probabilities: { up: 0.5, down: 0.3, flat: 0.2 } };
+    const result = filterResponse(partial, CustomerTier.RETAIL);
+
+    expect(result).toEqual({ direction_probabilities: { up: 0.5, down: 0.3, flat: 0.2 } });
+    expect(result).not.toHaveProperty('expected_move_pips');
+  });
+
+  it('does not mutate the original response object', () => {
+    const original = { ...FULL_RESPONSE };
+    const originalKeys = Object.keys(original).sort();
+
+    filterResponse(original, CustomerTier.RETAIL);
+
+    expect(Object.keys(original).sort()).toEqual(originalKeys);
+  });
+});
+
+// =============================================================================
+// createResponseFilter Middleware Tests
 // =============================================================================
 
 describe('createResponseFilter middleware', () => {
-  /** Helper to create a mock request with query and tier. */
-  function createMockRequest(query: Record<string, string> = {}, tier?: string): Request {
+  /** Helper to create a mock request with tier and anonymous flags. */
+  function createMockRequest(opts: { tier?: string; anonymous?: boolean } = {}): Request {
     return {
-      query,
-      tier,
+      tier: opts.tier,
+      anonymous: opts.anonymous ?? false,
     } as unknown as Request;
   }
 
-  /** Helper to create a mock response with json and status. */
+  /** Helper to create a mock response with json method. */
   function createMockResponse() {
     const res: Partial<Response> = {};
+    const sentData: unknown[] = [];
+    res.json = vi.fn((body: unknown) => {
+      sentData.push(body);
+      return res as Response;
+    });
     res.status = vi.fn().mockReturnValue(res);
-    res.json = vi.fn().mockReturnValue(res);
+    (res as Record<string, unknown>).__sentData = sentData;
     return res as Response;
   }
 
-  it('attaches resolved mode to request and calls next()', () => {
+  it('calls next() to register the interceptor', () => {
     const { middleware } = createResponseFilter();
-    const req = createMockRequest({ mode: 'trade' }, 'DEVELOPER');
+    const req = createMockRequest({ tier: 'RETAIL' });
     const res = createMockResponse();
     const next = vi.fn() as unknown as NextFunction;
 
     middleware(req, res, next);
 
-    expect((req as Record<string, unknown>).responseMode).toBe(ResponseMode.TRADE);
     expect(next).toHaveBeenCalledOnce();
   });
 
-  it('defaults to FORECAST when mode query param is absent (Req 11.12)', () => {
+  it('filters response data based on tier when res.json is called', () => {
     const { middleware } = createResponseFilter();
-    const req = createMockRequest({}, 'RETAIL');
+    const req = createMockRequest({ tier: 'RETAIL' });
     const res = createMockResponse();
     const next = vi.fn() as unknown as NextFunction;
 
     middleware(req, res, next);
 
-    expect((req as Record<string, unknown>).responseMode).toBe(ResponseMode.FORECAST);
-    expect(next).toHaveBeenCalledOnce();
+    // Simulate route handler calling res.json with full data
+    res.json(FULL_RESPONSE);
+
+    const sentData = (res as Record<string, unknown>).__sentData as unknown[];
+    const filtered = sentData[0] as Record<string, unknown>;
+
+    expect(filtered).toHaveProperty('direction_probabilities');
+    expect(filtered).toHaveProperty('confidence_final');
+    expect(filtered).not.toHaveProperty('state_layers');
+    expect(filtered).not.toHaveProperty('historical_distributions');
   });
 
-  it('returns 403 when tier does not authorize requested mode (Req 11.9)', () => {
+  it('filters enveloped responses (data field)', () => {
     const { middleware } = createResponseFilter();
-    const req = createMockRequest({ mode: 'raw' }, 'RETAIL');
+    const req = createMockRequest({ tier: 'RETAIL' });
     const res = createMockResponse();
     const next = vi.fn() as unknown as NextFunction;
 
     middleware(req, res, next);
 
-    expect(res.status).toHaveBeenCalledWith(403);
-    expect(res.json).toHaveBeenCalledWith({
-      error: 'mode_not_available',
-      mode: 'RAW',
-      tier: 'RETAIL',
-      message: 'Response mode "RAW" is not available for tier "RETAIL"',
+    // Simulate route handler calling res.json with envelope format
+    res.json({
+      data: FULL_RESPONSE,
+      meta: { request_id: 'uuid-123', timestamp: '2025-01-15T00:00:00Z' },
     });
-    expect(next).not.toHaveBeenCalled();
+
+    const sentData = (res as Record<string, unknown>).__sentData as unknown[];
+    const envelope = sentData[0] as Record<string, unknown>;
+    const data = envelope.data as Record<string, unknown>;
+
+    expect(data).toHaveProperty('direction_probabilities');
+    expect(data).not.toHaveProperty('state_layers');
+    // Meta is preserved
+    expect(envelope).toHaveProperty('meta');
   });
 
-  it('returns 403 when retail requests research mode', () => {
+  it('does not filter error responses', () => {
     const { middleware } = createResponseFilter();
-    const req = createMockRequest({ mode: 'research' }, 'RETAIL');
+    const req = createMockRequest({ tier: 'RETAIL' });
     const res = createMockResponse();
     const next = vi.fn() as unknown as NextFunction;
 
     middleware(req, res, next);
 
-    expect(res.status).toHaveBeenCalledWith(403);
-    expect(res.json).toHaveBeenCalledWith(
-      expect.objectContaining({
-        error: 'mode_not_available',
-        mode: 'RESEARCH',
-        tier: 'RETAIL',
-      }),
+    const errorBody = {
+      error: 'not_found',
+      message: 'Resource not found',
+      request_id: 'uuid-123',
+    };
+    res.json(errorBody);
+
+    const sentData = (res as Record<string, unknown>).__sentData as unknown[];
+    expect(sentData[0]).toEqual(errorBody);
+  });
+
+  it('applies anonymous filtering when req.anonymous is true', () => {
+    const { middleware } = createResponseFilter();
+    const req = createMockRequest({ anonymous: true });
+    const res = createMockResponse();
+    const next = vi.fn() as unknown as NextFunction;
+
+    middleware(req, res, next);
+
+    res.json(FULL_RESPONSE);
+
+    const sentData = (res as Record<string, unknown>).__sentData as unknown[];
+    const filtered = sentData[0] as Record<string, unknown>;
+
+    expect(Object.keys(filtered).sort()).toEqual(
+      ['confidence_final', 'direction_probabilities', 'tradeability_label'].sort()
     );
-    expect(next).not.toHaveBeenCalled();
   });
 
-  it('returns 403 when developer requests research mode', () => {
+  it('defaults to RETAIL filtering when tier is not set (Req 4.6)', () => {
     const { middleware } = createResponseFilter();
-    const req = createMockRequest({ mode: 'research' }, 'DEVELOPER');
+    const req = createMockRequest({}); // No tier, not anonymous
     const res = createMockResponse();
     const next = vi.fn() as unknown as NextFunction;
 
     middleware(req, res, next);
 
-    expect(res.status).toHaveBeenCalledWith(403);
-    expect(res.json).toHaveBeenCalledWith(
-      expect.objectContaining({
-        error: 'mode_not_available',
-        mode: 'RESEARCH',
-        tier: 'DEVELOPER',
-      }),
-    );
-    expect(next).not.toHaveBeenCalled();
+    res.json(FULL_RESPONSE);
+
+    const sentData = (res as Record<string, unknown>).__sentData as unknown[];
+    const filtered = sentData[0] as Record<string, unknown>;
+
+    expect(filtered).toHaveProperty('direction_probabilities');
+    expect(filtered).toHaveProperty('expected_move_pips');
+    expect(filtered).toHaveProperty('confidence_final');
+    expect(filtered).toHaveProperty('tradeability_score');
+    expect(filtered).toHaveProperty('tradeability_label');
+    expect(filtered).toHaveProperty('forecast_valid_until');
+    expect(filtered).not.toHaveProperty('state_layers');
   });
 
-  it('allows research tier to access research mode', () => {
+  it('INTERNAL tier returns complete payload through middleware', () => {
     const { middleware } = createResponseFilter();
-    const req = createMockRequest({ mode: 'research' }, 'RESEARCH');
+    const req = createMockRequest({ tier: 'INTERNAL' });
     const res = createMockResponse();
     const next = vi.fn() as unknown as NextFunction;
 
     middleware(req, res, next);
 
-    expect((req as Record<string, unknown>).responseMode).toBe(ResponseMode.RESEARCH);
-    expect(next).toHaveBeenCalledOnce();
+    res.json(FULL_RESPONSE);
+
+    const sentData = (res as Record<string, unknown>).__sentData as unknown[];
+    const filtered = sentData[0] as Record<string, unknown>;
+
+    expect(Object.keys(filtered).sort()).toEqual(Object.keys(FULL_RESPONSE).sort());
   });
 
-  it('defaults to RETAIL tier when tier is not set on request', () => {
+  it('passes through null/undefined/array bodies unchanged', () => {
     const { middleware } = createResponseFilter();
-    const req = createMockRequest({ mode: 'raw' }); // No tier set
+    const req = createMockRequest({ tier: 'RETAIL' });
     const res = createMockResponse();
     const next = vi.fn() as unknown as NextFunction;
 
     middleware(req, res, next);
 
-    // Should reject since RETAIL cannot access RAW
-    expect(res.status).toHaveBeenCalledWith(403);
-    expect(next).not.toHaveBeenCalled();
-  });
+    res.json(null);
+    res.json([1, 2, 3]);
 
-  it('allows request through when no mode and no tier (defaults to FORECAST + RETAIL)', () => {
-    const { middleware } = createResponseFilter();
-    const req = createMockRequest({}); // No mode, no tier
-    const res = createMockResponse();
-    const next = vi.fn() as unknown as NextFunction;
-
-    middleware(req, res, next);
-
-    // FORECAST is allowed for RETAIL
-    expect((req as Record<string, unknown>).responseMode).toBe(ResponseMode.FORECAST);
-    expect(next).toHaveBeenCalledOnce();
+    const sentData = (res as Record<string, unknown>).__sentData as unknown[];
+    expect(sentData[0]).toBeNull();
+    expect(sentData[1]).toEqual([1, 2, 3]);
   });
 });

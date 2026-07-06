@@ -299,132 +299,126 @@ describe('Integration: Authentication Middleware', () => {
 });
 
 // =============================================================================
-// 4. Response Mode Filtering / Tier Enforcement (Req 11.9)
+// 4. Tier-Based Response Filtering (Req 4.1, 4.2, 4.3, 4.4, 4.6)
 // =============================================================================
 
-describe('Integration: Response Mode Filtering and Tier Enforcement', () => {
+describe('Integration: Tier-Based Response Filtering', () => {
+  const FULL_PAYLOAD = {
+    direction_probabilities: { up: 0.55, down: 0.30, flat: 0.15 },
+    expected_move_pips: 12.5,
+    confidence_final: 0.68,
+    tradeability_score: 0.82,
+    tradeability_label: 'GO',
+    forecast_valid_until: '2025-01-15T12:00:00Z',
+    state_layers: { market_structure: [0.1, 0.2] },
+    layer_breakdown: { market_structure: 0.95 },
+    similarity_matches: [{ fingerprint_id: 'fp-1', similarity_score: 0.95 }],
+    match_explanation: { primary_match_reason: 'similar' },
+    contributing_factors: ['trend_alignment'],
+    execution_metrics: { spread_penalty: 'low' },
+    historical_distributions: [{ month: '2024-01', data: [1, 2] }],
+    time_series_data: [{ timestamp: '2024-01-01', value: 1.05 }],
+    research_metadata: { model_version: '2.1' },
+    trace_id_internal: 'trace-123',
+    pipeline_debug: { step: 'test' },
+    raw_engine_logs: ['log1'],
+  };
+
   /**
    * Test the response-filter middleware independently.
    * We mount it on a test app with a simulated tier set on the request.
    */
-  function createFilterTestApp(tier: CustomerTier) {
+  function createFilterTestApp(tier?: CustomerTier, anonymous?: boolean) {
     const app = express();
     app.use(express.json());
 
     // Simulate tier being set by auth middleware
     app.use((req, _res, next) => {
-      (req as unknown as Record<string, unknown>).tier = tier;
+      if (tier) (req as unknown as Record<string, unknown>).tier = tier;
+      if (anonymous) (req as unknown as Record<string, unknown>).anonymous = true;
       next();
     });
 
     const responseFilter = createResponseFilter();
     app.use(responseFilter.middleware);
 
-    app.get('/test', (req, res) => {
-      res.status(200).json({
-        mode: (req as unknown as Record<string, unknown>).responseMode,
-        tier,
-      });
+    app.get('/test', (_req, res) => {
+      res.status(200).json(FULL_PAYLOAD);
     });
 
     return app;
   }
 
-  it('defaults to FORECAST mode when no mode param specified (Req 11.9)', async () => {
+  it('RETAIL tier returns only 6 authorised fields (Req 4.1)', async () => {
     const app = createFilterTestApp(CustomerTier.RETAIL);
 
     const res = await request(app).get('/test');
 
     expect(res.status).toBe(200);
-    expect(res.body.mode).toBe('FORECAST');
+    expect(Object.keys(res.body).sort()).toEqual([
+      'confidence_final', 'direction_probabilities', 'expected_move_pips',
+      'forecast_valid_until', 'tradeability_label', 'tradeability_score',
+    ]);
   });
 
-  it('allows RETAIL tier to access forecast mode (Req 11.9)', async () => {
-    const app = createFilterTestApp(CustomerTier.RETAIL);
-
-    const res = await request(app).get('/test?mode=forecast');
-
-    expect(res.status).toBe(200);
-    expect(res.body.mode).toBe('FORECAST');
-  });
-
-  it('allows RETAIL tier to access trade mode (Req 11.9)', async () => {
-    const app = createFilterTestApp(CustomerTier.RETAIL);
-
-    const res = await request(app).get('/test?mode=trade');
-
-    expect(res.status).toBe(200);
-    expect(res.body.mode).toBe('TRADE');
-  });
-
-  it('returns 403 when RETAIL tier requests raw mode (Req 11.9)', async () => {
-    const app = createFilterTestApp(CustomerTier.RETAIL);
-
-    const res = await request(app).get('/test?mode=raw');
-
-    expect(res.status).toBe(403);
-    expect(res.body.error).toBe('mode_not_available');
-    expect(res.body.mode).toBe('RAW');
-    expect(res.body.tier).toBe(CustomerTier.RETAIL);
-  });
-
-  it('returns 403 when RETAIL tier requests research mode (Req 11.9)', async () => {
-    const app = createFilterTestApp(CustomerTier.RETAIL);
-
-    const res = await request(app).get('/test?mode=research');
-
-    expect(res.status).toBe(403);
-    expect(res.body.error).toBe('mode_not_available');
-    expect(res.body.mode).toBe('RESEARCH');
-    expect(res.body.tier).toBe(CustomerTier.RETAIL);
-  });
-
-  it('returns 403 when RETAIL tier requests explain mode (Req 11.9)', async () => {
-    const app = createFilterTestApp(CustomerTier.RETAIL);
-
-    const res = await request(app).get('/test?mode=explain');
-
-    expect(res.status).toBe(403);
-    expect(res.body.error).toBe('mode_not_available');
-    expect(res.body.mode).toBe('EXPLAIN');
-    expect(res.body.tier).toBe(CustomerTier.RETAIL);
-  });
-
-  it('allows DEVELOPER tier to access raw mode (Req 11.9)', async () => {
+  it('DEVELOPER tier returns RETAIL + developer fields (Req 4.2)', async () => {
     const app = createFilterTestApp(CustomerTier.DEVELOPER);
 
-    const res = await request(app).get('/test?mode=raw');
+    const res = await request(app).get('/test');
 
     expect(res.status).toBe(200);
-    expect(res.body.mode).toBe('RAW');
+    expect(res.body).toHaveProperty('state_layers');
+    expect(res.body).toHaveProperty('execution_metrics');
+    expect(res.body).not.toHaveProperty('historical_distributions');
+    expect(res.body).not.toHaveProperty('trace_id_internal');
   });
 
-  it('allows DEVELOPER tier to access explain mode (Req 11.9)', async () => {
-    const app = createFilterTestApp(CustomerTier.DEVELOPER);
-
-    const res = await request(app).get('/test?mode=explain');
-
-    expect(res.status).toBe(200);
-    expect(res.body.mode).toBe('EXPLAIN');
-  });
-
-  it('returns 403 when DEVELOPER tier requests research mode (Req 11.9)', async () => {
-    const app = createFilterTestApp(CustomerTier.DEVELOPER);
-
-    const res = await request(app).get('/test?mode=research');
-
-    expect(res.status).toBe(403);
-    expect(res.body.error).toBe('mode_not_available');
-    expect(res.body.mode).toBe('RESEARCH');
-  });
-
-  it('allows RESEARCH tier to access research mode (Req 11.9)', async () => {
+  it('RESEARCH tier returns DEVELOPER + research fields, excludes internal-only (Req 4.3)', async () => {
     const app = createFilterTestApp(CustomerTier.RESEARCH);
 
-    const res = await request(app).get('/test?mode=research');
+    const res = await request(app).get('/test');
 
     expect(res.status).toBe(200);
-    expect(res.body.mode).toBe('RESEARCH');
+    expect(res.body).toHaveProperty('historical_distributions');
+    expect(res.body).toHaveProperty('research_metadata');
+    expect(res.body).not.toHaveProperty('trace_id_internal');
+    expect(res.body).not.toHaveProperty('pipeline_debug');
+    expect(res.body).not.toHaveProperty('raw_engine_logs');
+  });
+
+  it('INTERNAL tier returns the complete unfiltered payload (Req 4.4)', async () => {
+    const app = createFilterTestApp(CustomerTier.INTERNAL);
+
+    const res = await request(app).get('/test');
+
+    expect(res.status).toBe(200);
+    expect(res.body).toHaveProperty('trace_id_internal');
+    expect(res.body).toHaveProperty('pipeline_debug');
+    expect(res.body).toHaveProperty('raw_engine_logs');
+    expect(Object.keys(res.body).length).toBe(Object.keys(FULL_PAYLOAD).length);
+  });
+
+  it('defaults to RETAIL filtering when tier is missing (Req 4.6)', async () => {
+    const app = createFilterTestApp(undefined);
+
+    const res = await request(app).get('/test');
+
+    expect(res.status).toBe(200);
+    expect(Object.keys(res.body).sort()).toEqual([
+      'confidence_final', 'direction_probabilities', 'expected_move_pips',
+      'forecast_valid_until', 'tradeability_label', 'tradeability_score',
+    ]);
+  });
+
+  it('anonymous access returns only 3 anonymous fields', async () => {
+    const app = createFilterTestApp(undefined, true);
+
+    const res = await request(app).get('/test');
+
+    expect(res.status).toBe(200);
+    expect(Object.keys(res.body).sort()).toEqual([
+      'confidence_final', 'direction_probabilities', 'tradeability_label',
+    ]);
   });
 });
 
