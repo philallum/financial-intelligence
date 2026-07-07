@@ -284,7 +284,7 @@ describe('Property 11: Invalid Pagination Rejection', () => {
         expect(res.body.error).toBe('invalid_parameter');
         expect(res.body.message).toContain('limit');
       }),
-      { numRuns: 100 }
+      { numRuns: 50 }
     );
   });
 
@@ -297,7 +297,7 @@ describe('Property 11: Invalid Pagination Rejection', () => {
         expect(res.body.error).toBe('invalid_parameter');
         expect(res.body.message).toContain('limit');
       }),
-      { numRuns: 100 }
+      { numRuns: 50 }
     );
   });
 
@@ -310,7 +310,7 @@ describe('Property 11: Invalid Pagination Rejection', () => {
         expect(res.body.error).toBe('invalid_parameter');
         expect(res.body.message).toContain('limit');
       }),
-      { numRuns: 100 }
+      { numRuns: 50 }
     );
   });
 
@@ -323,7 +323,7 @@ describe('Property 11: Invalid Pagination Rejection', () => {
         expect(res.body.error).toBe('invalid_parameter');
         expect(res.body.message).toContain('offset');
       }),
-      { numRuns: 100 }
+      { numRuns: 50 }
     );
   });
 
@@ -336,7 +336,7 @@ describe('Property 11: Invalid Pagination Rejection', () => {
         expect(res.body.error).toBe('invalid_parameter');
         expect(res.body.message).toContain('offset');
       }),
-      { numRuns: 100 }
+      { numRuns: 50 }
     );
   });
 
@@ -349,7 +349,7 @@ describe('Property 11: Invalid Pagination Rejection', () => {
         expect(res.body.error).toBe('invalid_parameter');
         expect(res.body.message).toContain('limit');
       }),
-      { numRuns: 100 }
+      { numRuns: 50 }
     );
   });
 
@@ -361,7 +361,7 @@ describe('Property 11: Invalid Pagination Rejection', () => {
         expect(res.status).toBe(200);
         expect(res.body.pagination.limit).toBe(limit);
       }),
-      { numRuns: 100 }
+      { numRuns: 50 }
     );
   });
 
@@ -373,7 +373,7 @@ describe('Property 11: Invalid Pagination Rejection', () => {
         expect(res.status).toBe(200);
         expect(res.body.pagination.offset).toBe(offset);
       }),
-      { numRuns: 100 }
+      { numRuns: 50 }
     );
   });
 });

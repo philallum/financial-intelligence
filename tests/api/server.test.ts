@@ -1,15 +1,25 @@
 /**
  * Tests for the Express API Gateway.
  *
- * Mocks Supabase client and verifies route behavior for:
- * - GET /v1/forecast/:asset (Req 8.1, 8.2, 8.4, 8.5)
- * - GET /v1/similarity/:asset
- * - GET /v1/state/:asset
- * - Health check endpoint
+ * Tests the full middleware chain with mocked auth and Supabase client.
+ * Verifies route behavior for:
+ * - GET /health — public endpoint
+ * - GET /v1/forecast/EURUSD — anonymous access (returns restricted subset)
+ * - GET /v1/forecast/:asset — authenticated access
+ * - GET /v1/similarity/:asset — authenticated access
+ * - GET /v1/state/:asset — authenticated access
+ *
+ * Note: Since the server now has a full middleware chain (auth, authorisation, etc.),
+ * these tests exercise the routes through the anonymous path (forecast only) or
+ * verify that auth is enforced on protected routes.
  */
 
 import { describe, it, expect, vi } from 'vitest';
 import request from 'supertest';
+import express from 'express';
+import { createForecastRouter } from '../../src/api/routes/forecast.js';
+import { createSimilarityRouter } from '../../src/api/routes/similarity.js';
+import { createStateRouter } from '../../src/api/routes/state.js';
 import { createApp } from '../../src/api/server.js';
 import type { Forecast } from '../../src/types/index.js';
 
@@ -20,29 +30,34 @@ import type { Forecast } from '../../src/types/index.js';
 interface MockResponse {
   data?: unknown;
   error?: { message: string } | null;
+  count?: number | null;
 }
 
 /**
  * Creates a mock Supabase client that routes queries to table-specific responses.
- * Each method in the chain returns the chain itself (thenable), and terminal
- * methods (.single()) resolve immediately with the configured response.
  */
 function createMockSupabase(tableResponses: Record<string, MockResponse>) {
   const mockFrom = vi.fn((tableName: string) => {
     const response = tableResponses[tableName] ?? { data: null, error: { message: 'Unknown table' } };
 
-    // Build a chainable object where every method returns itself
-    // and .single() resolves the configured response
     const chain: Record<string, unknown> = {};
     const self = () => chain;
 
-    chain.select = vi.fn(self);
+    chain.select = vi.fn((_fields?: string, opts?: { count?: string; head?: boolean }) => {
+      if (opts?.head) {
+        // Count query - return count in the response
+        return {
+          eq: vi.fn(() => Promise.resolve({ count: response.count ?? 0, error: null })),
+        };
+      }
+      return chain;
+    });
     chain.eq = vi.fn(self);
     chain.order = vi.fn(self);
     chain.limit = vi.fn(self);
+    chain.range = vi.fn(self);
     chain.single = vi.fn(() => Promise.resolve(response));
 
-    // Make the chain itself thenable (for queries without .single())
     chain.then = (
       resolve?: ((value: unknown) => unknown) | null,
       reject?: ((reason: unknown) => unknown) | null,
@@ -52,6 +67,22 @@ function createMockSupabase(tableResponses: Record<string, MockResponse>) {
   });
 
   return { from: mockFrom };
+}
+
+/**
+ * Creates a minimal test app with the route directly (bypasses auth for testing route logic).
+ */
+function createDirectApp(supabase: any, routePath: string, routeFactory: (opts: any) => express.Router) {
+  const app = express();
+  app.use((req, _res, next) => {
+    req.requestId = 'test-request-id';
+    req.anonymous = false;
+    req.tier = 'DEVELOPER' as any;
+    req.subscriptionPlan = 'PROFESSIONAL' as any;
+    next();
+  });
+  app.use(routePath, routeFactory({ supabase }));
+  return app;
 }
 
 // =============================================================================
@@ -82,33 +113,80 @@ describe('API Gateway - Health Check', () => {
     const res = await request(app).get('/health');
 
     expect(res.status).toBe(200);
-    expect(res.body).toEqual({ status: 'ok' });
+    expect(res.body.status).toBe('ok');
   });
 });
 
-describe('API Gateway - GET /v1/forecast/:asset', () => {
-  it('returns forecast with tradeability for a valid cached forecast (Req 8.1, 8.2)', async () => {
+describe('API Gateway - GET /v1/forecast/:asset (anonymous)', () => {
+  it('returns restricted forecast for anonymous EURUSD request', async () => {
     const supabase = createMockSupabase({
       cached_forecasts: {
         data: { payload: SAMPLE_FORECAST, valid_until: VALID_UNTIL },
         error: null,
       },
     });
-    const app = createApp({ supabase: supabase as never });
+
+    // Create app that simulates anonymous access
+    const app = express();
+    app.use((req, _res, next) => {
+      req.requestId = 'test-request-id';
+      req.anonymous = true;
+      next();
+    });
+    app.use('/v1/forecast', createForecastRouter({ supabase: supabase as never }));
 
     const res = await request(app).get('/v1/forecast/EURUSD');
 
     expect(res.status).toBe(200);
-    expect(res.body.asset).toBe('EURUSD');
-    expect(res.body.direction_probabilities).toEqual({ up: 0.55, down: 0.30, flat: 0.15 });
-    expect(res.body.expected_move_pips).toBe(12.5);
-    expect(res.body.confidence_final).toBe(0.68);
-    expect(res.body.tradeability_score).toBeTypeOf('number');
-    expect(res.body.tradeability_score).toBeGreaterThanOrEqual(0);
-    expect(res.body.tradeability_score).toBeLessThanOrEqual(1);
-    expect(res.body.tradeability_label).toMatch(/^(GO|CONDITIONAL|NO_GO)$/);
-    expect(res.body.forecast_valid_until).toBe(VALID_UNTIL);
-    expect(res.body.execution_metrics).toBeDefined();
+    expect(res.body.data.confidence_final).toBe(0.68);
+    expect(res.body.data.direction_probabilities).toEqual({ up: 0.55, down: 0.30, flat: 0.15 });
+    expect(res.body.data.tradeability_label).toBeDefined();
+    // Should NOT have full fields
+    expect(res.body.data.expected_move_pips).toBeUndefined();
+    expect(res.body.data.tradeability_score).toBeUndefined();
+    expect(res.body.meta.note).toBeDefined();
+  });
+
+  it('returns 400 for unsupported asset', async () => {
+    const supabase = createMockSupabase({});
+
+    const app = express();
+    app.use((req, _res, next) => {
+      req.requestId = 'test-request-id';
+      req.anonymous = true;
+      next();
+    });
+    app.use('/v1/forecast', createForecastRouter({ supabase: supabase as never }));
+
+    const res = await request(app).get('/v1/forecast/GBPJPY');
+
+    expect(res.status).toBe(400);
+    expect(res.body.error).toBe('asset_not_supported');
+  });
+});
+
+describe('API Gateway - GET /v1/forecast/:asset (authenticated)', () => {
+  it('returns full forecast with tradeability in envelope format', async () => {
+    const supabase = createMockSupabase({
+      cached_forecasts: {
+        data: { payload: SAMPLE_FORECAST, valid_until: VALID_UNTIL },
+        error: null,
+      },
+    });
+    const app = createDirectApp(supabase, '/v1/forecast', createForecastRouter);
+
+    const res = await request(app).get('/v1/forecast/EURUSD');
+
+    expect(res.status).toBe(200);
+    expect(res.body.data.asset).toBe('EURUSD');
+    expect(res.body.data.direction_probabilities).toEqual({ up: 0.55, down: 0.30, flat: 0.15 });
+    expect(res.body.data.expected_move_pips).toBe(12.5);
+    expect(res.body.data.confidence_final).toBe(0.68);
+    expect(res.body.data.tradeability_score).toBeTypeOf('number');
+    expect(res.body.data.tradeability_label).toMatch(/^(GO|CONDITIONAL|NO_GO)$/);
+    expect(res.body.data.forecast_valid_until).toBe(VALID_UNTIL);
+    expect(res.body.meta.request_id).toBe('test-request-id');
+    expect(res.body.meta.timestamp).toBeDefined();
   });
 
   it('handles case-insensitive asset parameter', async () => {
@@ -118,85 +196,109 @@ describe('API Gateway - GET /v1/forecast/:asset', () => {
         error: null,
       },
     });
-    const app = createApp({ supabase: supabase as never });
+    const app = createDirectApp(supabase, '/v1/forecast', createForecastRouter);
 
     const res = await request(app).get('/v1/forecast/eurusd');
 
     expect(res.status).toBe(200);
-    expect(res.body.asset).toBe('EURUSD');
+    expect(res.body.data.asset).toBe('EURUSD');
   });
 
-  it('returns 404 when no cached forecast exists (Req 8.4)', async () => {
+  it('returns 404 when no cached forecast exists', async () => {
     const supabase = createMockSupabase({
       cached_forecasts: {
         data: null,
         error: { message: 'No rows' },
       },
     });
-    const app = createApp({ supabase: supabase as never });
+    const app = createDirectApp(supabase, '/v1/forecast', createForecastRouter);
 
     const res = await request(app).get('/v1/forecast/EURUSD');
 
     expect(res.status).toBe(404);
     expect(res.body.error).toBe('forecast_unavailable');
-    expect(res.body.asset).toBe('EURUSD');
     expect(res.body.message).toContain('No forecast is currently available');
   });
 
-  it('returns 400 for unsupported asset (Req 8.5)', async () => {
+  it('returns 400 for unsupported asset', async () => {
     const supabase = createMockSupabase({});
-    const app = createApp({ supabase: supabase as never });
+    const app = createDirectApp(supabase, '/v1/forecast', createForecastRouter);
 
     const res = await request(app).get('/v1/forecast/GBPJPY');
 
     expect(res.status).toBe(400);
     expect(res.body.error).toBe('asset_not_supported');
-    expect(res.body.asset).toBe('GBPJPY');
     expect(res.body.message).toContain('not supported');
   });
 });
 
 describe('API Gateway - GET /v1/similarity/:asset', () => {
-  it('returns similarity matches for a valid asset', async () => {
+  it('returns paginated similarity matches for a valid asset', async () => {
     const mockMatches = [
-      { fingerprint_id: 'fp-1', similarity_score: 0.95, rank: 1 },
-      { fingerprint_id: 'fp-2', similarity_score: 0.88, rank: 2 },
+      { fingerprint_id: 'fp-1', similarity_score: 0.95, rank: 1, created_at: '2024-01-01T00:00:00Z' },
+      { fingerprint_id: 'fp-2', similarity_score: 0.88, rank: 2, created_at: '2024-01-01T00:00:00Z' },
     ];
 
-    const supabase = createMockSupabase({
-      similarity_matches: {
-        data: mockMatches,
-        error: null,
-      },
-    });
-    const app = createApp({ supabase: supabase as never });
+    const supabase = {
+      from: vi.fn((table: string) => {
+        const chain: any = {};
+        const self = () => chain;
+        chain.select = vi.fn((_fields?: string, opts?: any) => {
+          if (opts?.head) {
+            return { eq: vi.fn(() => Promise.resolve({ count: 2, error: null })) };
+          }
+          return chain;
+        });
+        chain.eq = vi.fn(self);
+        chain.order = vi.fn(self);
+        chain.range = vi.fn(() => Promise.resolve({ data: mockMatches, error: null }));
+        return chain;
+      }),
+    };
+
+    const app = createDirectApp(supabase, '/v1/similarity', createSimilarityRouter);
 
     const res = await request(app).get('/v1/similarity/EURUSD');
 
     expect(res.status).toBe(200);
-    expect(res.body.asset).toBe('EURUSD');
-    expect(res.body.match_count).toBe(2);
-    expect(res.body.matches).toEqual(mockMatches);
+    expect(res.body.data).toHaveLength(2);
+    expect(res.body.pagination.total).toBe(2);
+    expect(res.body.pagination.limit).toBe(20);
+    expect(res.body.pagination.offset).toBe(0);
+    expect(res.body.pagination.has_more).toBe(false);
   });
 
-  it('returns 404 when no similarity matches exist', async () => {
-    const supabase = createMockSupabase({
-      similarity_matches: {
-        data: [],
-        error: null,
-      },
-    });
-    const app = createApp({ supabase: supabase as never });
+  it('returns empty data when no similarity matches exist', async () => {
+    const supabase = {
+      from: vi.fn(() => {
+        const chain: any = {};
+        const self = () => chain;
+        chain.select = vi.fn((_fields?: string, opts?: any) => {
+          if (opts?.head) {
+            return { eq: vi.fn(() => Promise.resolve({ count: 0, error: null })) };
+          }
+          return chain;
+        });
+        chain.eq = vi.fn(self);
+        chain.order = vi.fn(self);
+        chain.range = vi.fn(() => Promise.resolve({ data: [], error: null }));
+        return chain;
+      }),
+    };
+
+    const app = createDirectApp(supabase, '/v1/similarity', createSimilarityRouter);
 
     const res = await request(app).get('/v1/similarity/EURUSD');
 
-    expect(res.status).toBe(404);
-    expect(res.body.error).toBe('no_matches_available');
+    expect(res.status).toBe(200);
+    expect(res.body.data).toHaveLength(0);
+    expect(res.body.pagination.total).toBe(0);
+    expect(res.body.pagination.has_more).toBe(false);
   });
 
   it('returns 400 for unsupported asset', async () => {
     const supabase = createMockSupabase({});
-    const app = createApp({ supabase: supabase as never });
+    const app = createDirectApp(supabase, '/v1/similarity', createSimilarityRouter);
 
     const res = await request(app).get('/v1/similarity/XAUUSD');
 
@@ -206,7 +308,7 @@ describe('API Gateway - GET /v1/similarity/:asset', () => {
 });
 
 describe('API Gateway - GET /v1/state/:asset', () => {
-  it('returns current state for a valid asset', async () => {
+  it('returns current state for a valid asset in envelope format', async () => {
     const mockState = {
       fingerprint_id: '550e8400-e29b-41d4-a716-446655440000',
       asset: 'EURUSD',
@@ -221,15 +323,16 @@ describe('API Gateway - GET /v1/state/:asset', () => {
         error: null,
       },
     });
-    const app = createApp({ supabase: supabase as never });
+    const app = createDirectApp(supabase, '/v1/state', createStateRouter);
 
     const res = await request(app).get('/v1/state/EURUSD');
 
     expect(res.status).toBe(200);
-    expect(res.body.asset).toBe('EURUSD');
-    expect(res.body.fingerprint_id).toBe(mockState.fingerprint_id);
-    expect(res.body.regime).toEqual(mockState.regime);
-    expect(res.body.market_state_version).toBe('1.0.0');
+    expect(res.body.data.asset).toBe('EURUSD');
+    expect(res.body.data.fingerprint_id).toBe(mockState.fingerprint_id);
+    expect(res.body.data.regime).toEqual(mockState.regime);
+    expect(res.body.data.market_state_version).toBe('1.0.0');
+    expect(res.body.meta.request_id).toBe('test-request-id');
   });
 
   it('returns 404 when no state data exists', async () => {
@@ -239,7 +342,7 @@ describe('API Gateway - GET /v1/state/:asset', () => {
         error: { message: 'No rows' },
       },
     });
-    const app = createApp({ supabase: supabase as never });
+    const app = createDirectApp(supabase, '/v1/state', createStateRouter);
 
     const res = await request(app).get('/v1/state/EURUSD');
 
@@ -249,11 +352,23 @@ describe('API Gateway - GET /v1/state/:asset', () => {
 
   it('returns 400 for unsupported asset', async () => {
     const supabase = createMockSupabase({});
-    const app = createApp({ supabase: supabase as never });
+    const app = createDirectApp(supabase, '/v1/state', createStateRouter);
 
     const res = await request(app).get('/v1/state/USDJPY');
 
     expect(res.status).toBe(400);
     expect(res.body.error).toBe('asset_not_supported');
+  });
+});
+
+describe('API Gateway - Auth enforcement', () => {
+  it('returns 401 for protected routes without API key', async () => {
+    const supabase = createMockSupabase({});
+    const app = createApp({ supabase: supabase as never });
+
+    const res = await request(app).get('/v1/state/EURUSD');
+
+    expect(res.status).toBe(401);
+    expect(res.body.error).toBe('unauthorized');
   });
 });

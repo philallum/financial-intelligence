@@ -152,9 +152,9 @@ export function createApp(options: CreateAppOptions): express.Express {
   );
 
   // ==========================================================================
-  // Global 405 for unmatched routes (catch-all)
+  // Global 404 for unmatched routes (catch-all)
   // ==========================================================================
-  app.all('*', (req: Request, res: Response): void => {
+  app.use((req: Request, res: Response): void => {
     res.status(404).json({
       error: 'not_found',
       message: `Route ${req.method} ${req.path} not found.`,
