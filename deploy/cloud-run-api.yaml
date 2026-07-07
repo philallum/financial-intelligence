@@ -76,6 +76,11 @@ spec:
                 secretKeyRef:
                   name: google-genai-api-key
                   key: latest
+            - name: RAPIDAPI_PROXY_SECRET
+              valueFrom:
+                secretKeyRef:
+                  name: rapidapi-proxy-secret
+                  key: latest
           # Startup probe — allow up to 30s for cold start
           startupProbe:
             httpGet:

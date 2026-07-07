@@ -383,15 +383,15 @@ Transform the Financial Intelligence Platform from an internal-use API into a pr
     - Test with Lighthouse
     - _Requirements: 9.8_
 
-- [ ] 17. RapidAPI Marketplace publication
-  - [~] 17.1 Store RAPIDAPI_PROXY_SECRET in Secret Manager
+- [x] 17. RapidAPI Marketplace publication
+  - [x] 17.1 Store RAPIDAPI_PROXY_SECRET in Secret Manager
     - Create secret `RAPIDAPI_PROXY_SECRET` in Google Cloud Secret Manager
     - Update Cloud Run service configuration to mount secret as environment variable
     - Add `RAPIDAPI_PROXY_SECRET` to `src/config/env.ts` for typed access
     - Update `.env.example` with placeholder for local development
     - _Requirements: 5.8, 16.1_
 
-  - [~] 17.2 Prepare RapidAPI Studio listing configuration
+  - [x] 17.2 Prepare RapidAPI Studio listing configuration
     - Create `docs/rapidapi/` directory with listing preparation files
     - Write `docs/rapidapi/listing-config.md` documenting:
       - General Tab: API name ("FX Intelligence API"), description, category (Finance), logo asset
@@ -403,7 +403,7 @@ Transform the Financial Intelligence Platform from an internal-use API into a pr
     - Create `docs/rapidapi/getting-started.md` for the marketplace documentation
     - _Requirements: 5.8_
 
-  - [~] 17.3 Validate OpenAPI spec for RapidAPI compatibility
+  - [x] 17.3 Validate OpenAPI spec for RapidAPI compatibility
     - Ensure spec does NOT include X-RapidAPI-* headers in security schemes (RapidAPI adds those)
     - Ensure all endpoints have descriptions, parameter tables, and response examples
     - Ensure spec conforms to RapidAPI marketplace documentation format requirements (Req 8.2)

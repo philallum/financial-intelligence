@@ -23,6 +23,9 @@ export interface EnvConfig {
   readonly SUPABASE_ANON_KEY: string;
   readonly SUPABASE_SERVICE_ROLE_KEY: string;
 
+  // RapidAPI
+  readonly RAPIDAPI_PROXY_SECRET: string;
+
   // Cloud Run
   readonly PORT: number;
   readonly NODE_ENV: 'development' | 'production' | 'test';
@@ -100,6 +103,7 @@ function loadEnvConfig(): EnvConfig {
     SUPABASE_URL: getRequiredString('SUPABASE_URL', nodeEnv),
     SUPABASE_ANON_KEY: getRequiredString('SUPABASE_ANON_KEY', nodeEnv),
     SUPABASE_SERVICE_ROLE_KEY: getRequiredString('SUPABASE_SERVICE_ROLE_KEY', nodeEnv),
+    RAPIDAPI_PROXY_SECRET: process.env['RAPIDAPI_PROXY_SECRET'] ?? '',
     PORT: getPort(),
     NODE_ENV: nodeEnv,
   });
