@@ -45,10 +45,16 @@ function createMockSupabase(tableResponses: Record<string, MockResponse>) {
 
     chain.select = vi.fn((_fields?: string, opts?: { count?: string; head?: boolean }) => {
       if (opts?.head) {
-        // Count query - return count in the response
-        return {
-          eq: vi.fn(() => Promise.resolve({ count: response.count ?? 0, error: null })),
+        // Count query - return a thenable that also has .eq()
+        const headResult = { count: response.count ?? 0, error: response.error ?? null };
+        const headChain: any = {
+          eq: vi.fn(() => Promise.resolve(headResult)),
+          then: (
+            resolve?: ((value: unknown) => unknown) | null,
+            reject?: ((reason: unknown) => unknown) | null,
+          ) => Promise.resolve(headResult).then(resolve, reject),
         };
+        return headChain;
       }
       return chain;
     });
@@ -106,14 +112,71 @@ const VALID_UNTIL = '2024-06-15T12:00:00.000Z';
 // =============================================================================
 
 describe('API Gateway - Health Check', () => {
-  it('GET /health returns 200 with status ok', async () => {
-    const supabase = createMockSupabase({});
+  it('GET /health returns 200 with status healthy when database is reachable', async () => {
+    const supabase = createMockSupabase({
+      customers: { data: null, error: null, count: 1 },
+    });
     const app = createApp({ supabase: supabase as never });
 
     const res = await request(app).get('/health');
 
     expect(res.status).toBe(200);
-    expect(res.body.status).toBe('ok');
+    expect(res.body.status).toBe('healthy');
+    expect(res.body.database).toBe('connected');
+    expect(res.body.timestamp).toBeDefined();
+    // Verify timestamp is valid ISO 8601
+    expect(new Date(res.body.timestamp).toISOString()).toBe(res.body.timestamp);
+  });
+
+  it('GET /health returns 200 with status degraded when database returns error', async () => {
+    const supabase = createMockSupabase({
+      customers: { data: null, error: { message: 'connection refused' }, count: null },
+    });
+    const app = createApp({ supabase: supabase as never });
+
+    const res = await request(app).get('/health');
+
+    expect(res.status).toBe(200);
+    expect(res.body.status).toBe('degraded');
+    expect(res.body.database).toBe('disconnected');
+    expect(res.body.timestamp).toBeDefined();
+  });
+
+  it('GET /health returns 200 with status degraded when database check times out', async () => {
+    // Create a supabase client that never resolves
+    const hangingSupabase = {
+      from: vi.fn(() => {
+        const chain: any = {};
+        chain.select = vi.fn(() => new Promise(() => {
+          // Never resolves — simulates a timeout scenario
+        }));
+        return chain;
+      }),
+    };
+    const app = createApp({ supabase: hangingSupabase as never });
+
+    const res = await request(app).get('/health');
+
+    expect(res.status).toBe(200);
+    expect(res.body.status).toBe('degraded');
+    expect(res.body.database).toBe('disconnected');
+    expect(res.body.timestamp).toBeDefined();
+  }, 10000); // Allow extra time for timeout test
+
+  it('GET /health always returns HTTP 200 regardless of dependency state', async () => {
+    // Supabase client that throws
+    const throwingSupabase = {
+      from: vi.fn(() => {
+        throw new Error('Supabase unavailable');
+      }),
+    };
+    const app = createApp({ supabase: throwingSupabase as never });
+
+    const res = await request(app).get('/health');
+
+    expect(res.status).toBe(200);
+    expect(res.body.status).toBe('degraded');
+    expect(res.body.database).toBe('disconnected');
   });
 });
 

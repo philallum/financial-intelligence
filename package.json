@@ -5,7 +5,8 @@
   "main": "dist/index.js",
   "type": "module",
   "scripts": {
-    "build": "tsc",
+    "build": "tsc && tsx scripts/generate-openapi.ts",
+    "build:openapi": "tsx scripts/generate-openapi.ts",
     "start": "node dist/index.js",
     "dev": "tsx src/index.ts",
     "test": "vitest --run",
@@ -30,10 +31,12 @@
     "@supabase/supabase-js": "2.110.0",
     "argon2": "^0.44.0",
     "dotenv": "17.4.2",
-    "express": "5.2.1"
+    "express": "5.2.1",
+    "js-yaml": "4.1.0"
   },
   "devDependencies": {
     "@types/express": "5.0.6",
+    "@types/js-yaml": "4.0.9",
     "@types/node": "26.0.1",
     "@types/supertest": "^7.2.0",
     "fast-check": "4.8.0",

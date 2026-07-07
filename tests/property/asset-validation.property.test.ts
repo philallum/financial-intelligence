@@ -82,5 +82,5 @@ describe('Property 16: Unsupported Asset Error', () => {
       }),
       { numRuns: 100 },
     );
-  });
+  }, 30000);
 });

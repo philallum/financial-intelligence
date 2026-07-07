@@ -25,10 +25,15 @@
 import express from 'express';
 import type { Request, Response, NextFunction } from 'express';
 import type { SupabaseClient } from '@supabase/supabase-js';
+import fs from 'node:fs';
+import path from 'node:path';
+import { fileURLToPath } from 'node:url';
+import yaml from 'js-yaml';
 
 // Middleware imports
 import { securityHeaders } from './middleware/security.js';
 import { requestId } from './middleware/request-id.js';
+import { requestLogger } from './middleware/request-logger.js';
 import { sizeGuard } from './middleware/size-guard.js';
 import { createAuthMiddleware } from './middleware/auth.js';
 import { authorisationMiddleware } from './middleware/authorisation.js';
@@ -66,6 +71,11 @@ export function createApp(options: CreateAppOptions): express.Express {
   app.use(requestId);
 
   // ==========================================================================
+  // 2b. Request Logger (Req 10.2, 10.5)
+  // ==========================================================================
+  app.use(requestLogger);
+
+  // ==========================================================================
   // 3. Size Guard (Req 15.2, 15.5)
   // ==========================================================================
   app.use(sizeGuard);
@@ -91,9 +101,104 @@ export function createApp(options: CreateAppOptions): express.Express {
   // Public Routes — bypass auth/authorisation/rate-limiter
   // ==========================================================================
 
-  // Health endpoint (Req 10.3) — simple version
-  app.get('/health', (_req: Request, res: Response): void => {
-    res.status(200).json({ status: 'ok' });
+  // Health endpoint (Req 10.3, 10.6) — with dependency checks
+  app.get('/health', async (_req: Request, res: Response): Promise<void> => {
+    const HEALTH_CHECK_TIMEOUT_MS = 5000;
+    let databaseStatus: 'connected' | 'disconnected' = 'disconnected';
+    let status: 'healthy' | 'degraded' = 'degraded';
+
+    try {
+      const dbCheck = supabase
+        .from('customers')
+        .select('id', { count: 'exact', head: true });
+
+      const timeoutPromise = new Promise<never>((_resolve, reject) => {
+        setTimeout(() => reject(new Error('Health check timeout')), HEALTH_CHECK_TIMEOUT_MS);
+      });
+
+      const result = await Promise.race([dbCheck, timeoutPromise]);
+
+      if (result && !(result as any).error) {
+        databaseStatus = 'connected';
+        status = 'healthy';
+      }
+    } catch {
+      // Timeout or error — remain degraded/disconnected
+    }
+
+    res.status(200).json({
+      status,
+      database: databaseStatus,
+      timestamp: new Date().toISOString(),
+    });
+  });
+
+  // OpenAPI spec endpoint (Req 7.1, 7.6) — no auth required
+  app.get('/v1/openapi.json', (_req: Request, res: Response): void => {
+    try {
+      // Resolve path to the build-time generated openapi.json
+      const specPath = path.resolve(import.meta.dirname, '..', 'openapi.json');
+      const content = fs.readFileSync(specPath, 'utf-8');
+      res.setHeader('Content-Type', 'application/json');
+      res.status(200).send(content);
+    } catch {
+      res.status(503).json({
+        error: 'service_unavailable',
+        message: 'OpenAPI specification is temporarily unavailable.',
+        request_id: (_req as any).requestId || 'unknown',
+      });
+    }
+  });
+
+  // Swagger UI at /docs (Req 13.3) — serves OpenAPI spec via CDN-based Swagger UI
+  const __filename = fileURLToPath(import.meta.url);
+  const __dirname = path.dirname(__filename);
+  let openapiSpec: object | null = null;
+  try {
+    const specPath = path.resolve(__dirname, 'openapi', 'openapi.yaml');
+    const specContent = fs.readFileSync(specPath, 'utf-8');
+    openapiSpec = yaml.load(specContent) as object;
+  } catch {
+    // Spec will be null if file is missing/unreadable
+  }
+
+  app.get('/docs', (_req: Request, res: Response): void => {
+    if (!openapiSpec) {
+      res.status(503).json({
+        error: 'service_unavailable',
+        message: 'API documentation is temporarily unavailable.',
+      });
+      return;
+    }
+
+    const specJson = JSON.stringify(openapiSpec);
+    res.setHeader('Content-Type', 'text/html');
+    res.send(`<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>FX Intelligence API - Documentation</title>
+  <link rel="stylesheet" href="https://unpkg.com/swagger-ui-dist@5.18.2/swagger-ui.css">
+  <style>
+    body { margin: 0; padding: 0; }
+    #swagger-ui { max-width: 1460px; margin: 0 auto; padding: 20px; }
+  </style>
+</head>
+<body>
+  <div id="swagger-ui"></div>
+  <script src="https://unpkg.com/swagger-ui-dist@5.18.2/swagger-ui-bundle.js"></script>
+  <script>
+    SwaggerUIBundle({
+      spec: ${specJson},
+      dom_id: '#swagger-ui',
+      presets: [SwaggerUIBundle.presets.apis, SwaggerUIBundle.SwaggerUIStandalonePreset],
+      layout: 'BaseLayout',
+      deepLinking: true,
+    });
+  </script>
+</body>
+</html>`);
   });
 
   // ==========================================================================

@@ -189,6 +189,7 @@ const arbExtendedFeaturesInput: fc.Arbitrary<ExtendedFeaturesInput> = fc.record(
     { nil: undefined },
   ),
   timestamp_utc: fc.date({ min: new Date("2023-01-01"), max: new Date("2025-01-01") })
+    .filter((d) => !isNaN(d.getTime()))
     .map((d) => d.toISOString()),
 });
 
