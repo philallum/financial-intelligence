@@ -43,24 +43,28 @@ CREATE INDEX IF NOT EXISTS idx_exp_id
 ALTER TABLE research_experiments ENABLE ROW LEVEL SECURITY;
 
 -- Allow all INSERTs (new experiment records can be written)
+DROP POLICY IF EXISTS research_experiments_insert_policy ON PLACEHOLDER;
 CREATE POLICY research_experiments_insert_policy
     ON research_experiments
     FOR INSERT
     WITH CHECK (true);
 
 -- Allow all SELECTs (experiment records can be read)
+DROP POLICY IF EXISTS research_experiments_select_policy ON PLACEHOLDER;
 CREATE POLICY research_experiments_select_policy
     ON research_experiments
     FOR SELECT
     USING (true);
 
 -- Allow UPDATEs (experiments need status transitions during execution)
+DROP POLICY IF EXISTS research_experiments_update_policy ON PLACEHOLDER;
 CREATE POLICY research_experiments_update_policy
     ON research_experiments
     FOR UPDATE
     USING (true);
 
 -- Deny all DELETEs (experiment history is preserved permanently)
+DROP POLICY IF EXISTS research_experiments_no_delete_policy ON PLACEHOLDER;
 CREATE POLICY research_experiments_no_delete_policy
     ON research_experiments
     FOR DELETE

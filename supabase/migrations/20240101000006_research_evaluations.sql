@@ -44,12 +44,14 @@ CREATE INDEX IF NOT EXISTS idx_re_engine ON research_evaluations (engine_version
 ALTER TABLE research_evaluations ENABLE ROW LEVEL SECURITY;
 
 -- Allow INSERT for all authenticated roles (batch pipeline service role)
+DROP POLICY IF EXISTS research_evaluations_insert_policy ON PLACEHOLDER;
 CREATE POLICY research_evaluations_insert_policy
     ON research_evaluations
     FOR INSERT
     WITH CHECK (true);
 
 -- Allow SELECT for all authenticated roles (read access for evaluation queries)
+DROP POLICY IF EXISTS research_evaluations_select_policy ON PLACEHOLDER;
 CREATE POLICY research_evaluations_select_policy
     ON research_evaluations
     FOR SELECT

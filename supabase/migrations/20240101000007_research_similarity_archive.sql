@@ -50,24 +50,28 @@ CREATE INDEX IF NOT EXISTS idx_rsa_batch
 ALTER TABLE research_similarity_archive ENABLE ROW LEVEL SECURITY;
 
 -- Allow all INSERTs (new records can be written)
+DROP POLICY IF EXISTS research_similarity_archive_insert_policy ON PLACEHOLDER;
 CREATE POLICY research_similarity_archive_insert_policy
     ON research_similarity_archive
     FOR INSERT
     WITH CHECK (true);
 
 -- Allow all SELECTs (records can be read)
+DROP POLICY IF EXISTS research_similarity_archive_select_policy ON PLACEHOLDER;
 CREATE POLICY research_similarity_archive_select_policy
     ON research_similarity_archive
     FOR SELECT
     USING (true);
 
 -- Deny all UPDATEs (immutability: no record modification)
+DROP POLICY IF EXISTS research_similarity_archive_no_update_policy ON PLACEHOLDER;
 CREATE POLICY research_similarity_archive_no_update_policy
     ON research_similarity_archive
     FOR UPDATE
     USING (false);
 
 -- Deny all DELETEs (immutability: no record removal)
+DROP POLICY IF EXISTS research_similarity_archive_no_delete_policy ON PLACEHOLDER;
 CREATE POLICY research_similarity_archive_no_delete_policy
     ON research_similarity_archive
     FOR DELETE

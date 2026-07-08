@@ -93,7 +93,7 @@ export function createForecastRouter(options: ForecastRouteOptions): Router {
 
   router.get('/:asset', async (req: Request, res: Response) => {
     const { asset } = req.params;
-    const upperAsset = asset.toUpperCase();
+    const upperAsset = (Array.isArray(asset) ? asset[0] : asset).toUpperCase();
     const requestId = req.requestId || 'unknown';
 
     // Req 14.1: Check if asset is supported

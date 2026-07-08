@@ -146,7 +146,7 @@ Transform the Financial Intelligence Platform from an internal-use API into a pr
     - Test direct requests (isMarketplaceRequest=false) still subject to rate limiting
     - _Requirements: 5.8_
 
-- [~] 5. Checkpoint - Ensure all tests pass
+- [x] 5. Checkpoint - Ensure all tests pass
   - Ensure all tests pass, ask the user if questions arise.
 
 - [x] 6. Response filtering by tier
@@ -356,14 +356,14 @@ Transform the Financial Intelligence Platform from an internal-use API into a pr
   - Ensure all tests pass, ask the user if questions arise.
 
 - [x] 16. Marketing website
-  - [~] 16.1 Scaffold React + Vite + Tailwind website project
+  - [x] 16.1 Scaffold React + Vite + Tailwind website project
     - Create `website/` directory with Vite React TypeScript template
     - Install Tailwind CSS and configure
     - Set up project structure: pages/, components/, hooks/, assets/
     - Configure Firebase Hosting deployment in `firebase.json`
     - _Requirements: 9.1, 9.2_
 
-  - [~] 16.2 Implement website pages and navigation
+  - [x] 16.2 Implement website pages and navigation
     - Build pages: Home (hero with live demo preview, value proposition), API Playground, Pricing, Documentation, Status, About, Privacy Policy, Terms of Service
     - Implement responsive navigation visible without scrolling on viewports ≥768px
     - Use ≤2 typeface families, consistent spacing scale
@@ -371,13 +371,13 @@ Transform the Financial Intelligence Platform from an internal-use API into a pr
     - Include RapidAPI Marketplace link/badge as alternative purchase channel on Pricing page
     - _Requirements: 9.3, 9.4, 9.7_
 
-  - [~] 16.3 Implement live data fetching from anonymous forecast endpoint
+  - [x] 16.3 Implement live data fetching from anonymous forecast endpoint
     - Create hook to fetch GET /v1/forecast/EURUSD from the API
     - Display confidence, direction probabilities, tradeability label on Home page
     - Implement 3-second timeout and graceful fallback to static placeholders (Req 9.6)
     - _Requirements: 9.5, 9.6_
 
-  - [~] 16.4 Optimise for performance targets
+  - [x] 16.4 Optimise for performance targets
     - Ensure LCP ≤ 2500ms and CLS ≤ 0.1 on 4G connection
     - Lazy-load non-critical assets, optimise images, minimise JS bundle
     - Test with Lighthouse

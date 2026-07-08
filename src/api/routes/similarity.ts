@@ -56,7 +56,7 @@ export function createSimilarityRouter(options: SimilarityRouteOptions): Router 
 
   router.get('/:asset', async (req, res) => {
     const { asset } = req.params;
-    const upperAsset = asset.toUpperCase();
+    const upperAsset = (Array.isArray(asset) ? asset[0] : asset).toUpperCase();
     const requestId = (req as any).requestId ?? '';
 
     // Check if asset is supported
@@ -76,7 +76,7 @@ export function createSimilarityRouter(options: SimilarityRouteOptions): Router 
     const rawOffset = parsePaginationParam(req.query.offset);
 
     // Validate limit
-    let limit = PAGINATION.DEFAULT_LIMIT;
+    let limit: number = PAGINATION.DEFAULT_LIMIT;
     if (rawLimit !== null) {
       if (Number.isNaN(rawLimit) || rawLimit < PAGINATION.MIN_LIMIT || rawLimit > PAGINATION.MAX_LIMIT) {
         res.status(400).json(
@@ -92,7 +92,7 @@ export function createSimilarityRouter(options: SimilarityRouteOptions): Router 
     }
 
     // Validate offset
-    let offset = PAGINATION.DEFAULT_OFFSET;
+    let offset: number = PAGINATION.DEFAULT_OFFSET;
     if (rawOffset !== null) {
       if (Number.isNaN(rawOffset) || rawOffset < PAGINATION.MIN_OFFSET) {
         res.status(400).json(

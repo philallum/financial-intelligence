@@ -44,9 +44,9 @@ CREATE INDEX IF NOT EXISTS idx_rf_batch
 CREATE INDEX IF NOT EXISTS idx_rf_asset_time
     ON research_forecasts (asset, timeframe, forecast_timestamp DESC);
 
--- Partial index for unexpired forecasts (evaluation engine queries)
+-- Index for expiry-based queries (evaluation engine queries)
 CREATE INDEX IF NOT EXISTS idx_rf_expiry
-    ON research_forecasts (forecast_expiry) WHERE forecast_expiry > NOW();
+    ON research_forecasts (forecast_expiry);
 
 -- Regime-based filtering for calibration and analysis
 CREATE INDEX IF NOT EXISTS idx_rf_regime
@@ -62,24 +62,28 @@ CREATE INDEX IF NOT EXISTS idx_rf_regime
 ALTER TABLE research_forecasts ENABLE ROW LEVEL SECURITY;
 
 -- Allow all INSERTs (new records can be written)
+DROP POLICY IF EXISTS research_forecasts_insert_policy ON research_forecasts;
 CREATE POLICY research_forecasts_insert_policy
     ON research_forecasts
     FOR INSERT
     WITH CHECK (true);
 
 -- Allow all SELECTs (records can be read)
+DROP POLICY IF EXISTS research_forecasts_select_policy ON research_forecasts;
 CREATE POLICY research_forecasts_select_policy
     ON research_forecasts
     FOR SELECT
     USING (true);
 
 -- Deny all UPDATEs (immutability: no record modification)
+DROP POLICY IF EXISTS research_forecasts_no_update_policy ON research_forecasts;
 CREATE POLICY research_forecasts_no_update_policy
     ON research_forecasts
     FOR UPDATE
     USING (false);
 
 -- Deny all DELETEs (immutability: no record removal)
+DROP POLICY IF EXISTS research_forecasts_no_delete_policy ON research_forecasts;
 CREATE POLICY research_forecasts_no_delete_policy
     ON research_forecasts
     FOR DELETE

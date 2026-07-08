@@ -48,24 +48,28 @@ CREATE INDEX IF NOT EXISTS idx_topo_asset
 ALTER TABLE fingerprint_topology ENABLE ROW LEVEL SECURITY;
 
 -- Allow all INSERTs (new topology records can be written)
+DROP POLICY IF EXISTS fingerprint_topology_insert_policy ON PLACEHOLDER;
 CREATE POLICY fingerprint_topology_insert_policy
     ON fingerprint_topology
     FOR INSERT
     WITH CHECK (true);
 
 -- Allow all SELECTs (topology records can be read)
+DROP POLICY IF EXISTS fingerprint_topology_select_policy ON PLACEHOLDER;
 CREATE POLICY fingerprint_topology_select_policy
     ON fingerprint_topology
     FOR SELECT
     USING (true);
 
 -- Deny all UPDATEs (immutability: no record modification)
+DROP POLICY IF EXISTS fingerprint_topology_no_update_policy ON PLACEHOLDER;
 CREATE POLICY fingerprint_topology_no_update_policy
     ON fingerprint_topology
     FOR UPDATE
     USING (false);
 
 -- Deny all DELETEs (immutability: no record removal)
+DROP POLICY IF EXISTS fingerprint_topology_no_delete_policy ON PLACEHOLDER;
 CREATE POLICY fingerprint_topology_no_delete_policy
     ON fingerprint_topology
     FOR DELETE

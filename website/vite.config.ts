@@ -6,6 +6,8 @@ import tailwindcss from '@tailwindcss/vite'
 export default defineConfig({
   plugins: [react(), tailwindcss()],
   build: {
+    // Keep CSS in a single file to reduce render-blocking requests
+    cssCodeSplit: false,
     rollupOptions: {
       output: {
         manualChunks(id) {
