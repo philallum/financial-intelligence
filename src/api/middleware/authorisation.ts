@@ -96,7 +96,10 @@ function findEndpointConfig(requestPath: string): EndpointConfig | undefined {
  * Must run after auth middleware (which sets req.tier and req.anonymous).
  */
 export function authorisationMiddleware(req: Request, res: Response, next: NextFunction): void {
-  const endpointConfig = findEndpointConfig(req.path);
+  // Use originalUrl to get the full path including mount prefix (e.g. /v1/forecast/EURUSD)
+  // req.path is relative to the mount point when using app.use('/prefix', middleware)
+  const fullPath = (req.originalUrl ?? req.path).split('?')[0];
+  const endpointConfig = findEndpointConfig(fullPath);
 
   // -------------------------------------------------------------------------
   // Deny-by-default: endpoint not in metadata → 403 (Req 3.5)

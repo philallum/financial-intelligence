@@ -169,17 +169,8 @@ export function createAuthMiddleware(options: AuthMiddlewareOptions) {
 
   return async (req: Request, res: Response, next: NextFunction): Promise<void> => {
     // -------------------------------------------------------------------------
-    // 1. Anonymous access — GET /v1/forecast/EURUSD without auth
-    // -------------------------------------------------------------------------
-    if (isAnonymousEligible(req)) {
-      req.anonymous = true;
-      req.isMarketplaceRequest = false;
-      next();
-      return;
-    }
-
-    // -------------------------------------------------------------------------
-    // 2. RapidAPI path — check proxy-secret header first
+    // 1. RapidAPI path — check proxy-secret header first (takes priority over anonymous)
+    //    Marketplace customers should get their subscription-level response, not anonymous.
     // -------------------------------------------------------------------------
     if (isRapidApiRequest(req)) {
       const subscription = (req.headers['x-rapidapi-subscription'] as string) ?? '';
@@ -193,6 +184,16 @@ export function createAuthMiddleware(options: AuthMiddlewareOptions) {
       req.isMarketplaceRequest = true;
       req.anonymous = false;
 
+      next();
+      return;
+    }
+
+    // -------------------------------------------------------------------------
+    // 2. Anonymous access — GET /v1/forecast/EURUSD without auth
+    // -------------------------------------------------------------------------
+    if (isAnonymousEligible(req)) {
+      req.anonymous = true;
+      req.isMarketplaceRequest = false;
       next();
       return;
     }

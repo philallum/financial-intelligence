@@ -12,7 +12,7 @@
 #   gcloud builds submit --config=cloudbuild.yaml \
 #     --project=financial-intelligence-501107
 #
-# Requirements: 12.1, 12.2, 12.6, 12.7
+# Requirements: 12.1, 12.2, 12.6, 12.7, 16.2, 16.4
 # =============================================================================
 
 substitutions:
@@ -22,6 +22,26 @@ substitutions:
   _TAG: 'latest'
 
 steps:
+  # --- Step 0a: Install Node.js dependencies ---
+  - name: 'node:22-alpine'
+    entrypoint: 'npm'
+    args: ['ci']
+    id: 'install-deps'
+
+  # --- Step 0b: Run tests ---
+  - name: 'node:22-alpine'
+    entrypoint: 'npx'
+    args: ['vitest', '--run']
+    waitFor: ['install-deps']
+    id: 'run-tests'
+
+  # --- Step 0c: Build TypeScript and generate OpenAPI spec ---
+  - name: 'node:22-alpine'
+    entrypoint: 'npm'
+    args: ['run', 'build']
+    waitFor: ['install-deps']
+    id: 'build-ts'
+
   # --- Step 1: Build batch pipeline image ---
   - name: 'gcr.io/cloud-builders/docker'
     args:
@@ -33,6 +53,7 @@ steps:
       - '-t'
       - '${_REGISTRY}/$PROJECT_ID/${_REPOSITORY}/batch:latest'
       - '.'
+    waitFor: ['run-tests', 'build-ts']
     id: 'build-batch'
 
   # --- Step 2: Build API service image ---
@@ -46,6 +67,7 @@ steps:
       - '-t'
       - '${_REGISTRY}/$PROJECT_ID/${_REPOSITORY}/api:latest'
       - '.'
+    waitFor: ['run-tests', 'build-ts']
     id: 'build-api'
 
   # --- Step 3: Push batch image ---
@@ -90,8 +112,8 @@ steps:
     id: 'deploy-batch'
 
   # --- Step 6: Deploy API Cloud Run Service ---
-  # Note: Only update the image. Env vars (including secrets) are managed
-  # via the Cloud Run console or gcloud run services update directly.
+  # Deploys with max 2 instances (cost ceiling) and mounts RAPIDAPI_PROXY_SECRET
+  # from Secret Manager for RapidAPI marketplace proxy validation.
   - name: 'gcr.io/google.com/cloudsdktool/cloud-sdk'
     entrypoint: 'gcloud'
     args:
@@ -101,8 +123,26 @@ steps:
       - 'financial-intelligence-api'
       - '--image=${_REGISTRY}/$PROJECT_ID/${_REPOSITORY}/api:${_TAG}'
       - '--region=${_REGION}'
+      - '--max-instances=2'
+      - '--update-secrets=RAPIDAPI_PROXY_SECRET=rapidapi-proxy-secret:latest'
     waitFor: ['push-api', 'push-api-latest']
     id: 'deploy-api'
+
+  # --- Step 7 (Optional): Deploy marketing website to Firebase Hosting ---
+  # This step deploys the website independently of the API/batch services.
+  # Requires Firebase CLI and appropriate IAM permissions on the builder.
+  # Requirements: 9.2, 16.4
+  - name: 'node:20'
+    entrypoint: 'bash'
+    args:
+      - '-c'
+      - |
+        cd website
+        npm ci
+        npm run build
+        npx firebase-tools deploy --only hosting --project=$PROJECT_ID
+    waitFor: ['-']
+    id: 'deploy-website'
 
 images:
   - '${_REGISTRY}/$PROJECT_ID/${_REPOSITORY}/batch:${_TAG}'

@@ -410,8 +410,8 @@ Transform the Financial Intelligence Platform from an internal-use API into a pr
     - Test spec upload against RapidAPI's validation (or use their CLI/preview tool)
     - _Requirements: 7.1, 7.2, 8.2_
 
-- [ ] 18. Customer and API key management utilities
-  - [~] 18.1 Implement key creation utility with Argon2id hashing
+- [x] 18. Customer and API key management utilities
+  - [x] 18.1 Implement key creation utility with Argon2id hashing
     - Create `src/api/services/key-management.ts` with functions:
       - `createApiKey(projectId, name, description, subscriptionPlan)` → returns plaintext key once, stores Argon2id hash
       - `revokeApiKey(keyId)` → marks key as inactive without deleting
@@ -419,15 +419,15 @@ Transform the Financial Intelligence Platform from an internal-use API into a pr
       - Enforce unique name among active keys per project (Req 2.6)
     - _Requirements: 2.1, 2.2, 2.3, 2.4, 2.5, 2.6_
 
-  - [ ] 18.2 Write unit test for key creation constraints
+  - [x] 18.2 Write unit test for key creation constraints
     - **Property 12: Key Creation Constraints**
     - **Validates: Requirements 2.5, 2.6**
     - File: `tests/unit/key-management.test.ts`
     - Test 20-key limit and name uniqueness enforcement
     - _Requirements: 2.5, 2.6_
 
-- [ ] 19. Integration tests
-  - [ ] 19.1 Write integration tests for complete request lifecycle
+- [x] 19. Integration tests
+  - [x] 19.1 Write integration tests for complete request lifecycle
     - Test full middleware chain execution order (security → request-id → size-guard → cors → auth → authorisation → rate-limiter → response-filter → route)
     - Test authenticated direct request end-to-end
     - Test anonymous forecast end-to-end
@@ -436,7 +436,7 @@ Transform the Financial Intelligence Platform from an internal-use API into a pr
     - File: `tests/integration/full-middleware-chain.test.ts`
     - _Requirements: 3.4, 6.2, 6.3_
 
-  - [ ] 19.2 Write integration test for RapidAPI marketplace request end-to-end
+  - [x] 19.2 Write integration test for RapidAPI marketplace request end-to-end
     - Test complete flow: valid X-RapidAPI-Proxy-Secret → tier mapping from X-RapidAPI-Subscription → response filtering using mapped tier → no internal rate limit hit
     - Test with each subscription level: BASIC (RETAIL fields), PRO (DEVELOPER fields), ULTRA/MEGA (RESEARCH fields)
     - Verify req.isMarketplaceRequest=true, req.rapidApiUser, req.rapidApiSubscription populated
@@ -444,14 +444,14 @@ Transform the Financial Intelligence Platform from an internal-use API into a pr
     - File: `tests/integration/rapidapi-integration.test.ts`
     - _Requirements: 5.8, 4.1, 4.2, 4.3_
 
-  - [ ] 19.3 Write integration tests for customer and project management
+  - [x] 19.3 Write integration tests for customer and project management
     - Test Customer → Project → Key hierarchy
     - Test tier inheritance from customer to key
     - File: `tests/integration/customer-projects.test.ts`
     - _Requirements: 2.1, 2.4_
 
-- [ ] 20. CI/CD and deployment configuration
-  - [~] 20.1 Update Cloud Build configuration for API deployment
+- [x] 20. CI/CD and deployment configuration
+  - [x] 20.1 Update Cloud Build configuration for API deployment
     - Update `cloudbuild.yaml` to include:
       - OpenAPI spec generation step
       - Run tests (vitest --run)
@@ -461,12 +461,12 @@ Transform the Financial Intelligence Platform from an internal-use API into a pr
     - Configure RAPIDAPI_PROXY_SECRET secret mounting in Cloud Run service YAML
     - _Requirements: 16.2, 16.4_
 
-  - [~] 20.2 Add Firebase Hosting deployment configuration for marketing website
+  - [x] 20.2 Add Firebase Hosting deployment configuration for marketing website
     - Create `website/firebase.json` with hosting configuration
     - Add deployment script or CI step for `firebase deploy --only hosting`
     - _Requirements: 9.2, 16.4_
 
-- [~] 21. Final checkpoint - Ensure all tests pass
+- [x] 21. Final checkpoint - Ensure all tests pass
   - Ensure all tests pass, ask the user if questions arise.
 
 ## Notes
