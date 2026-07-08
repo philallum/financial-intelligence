@@ -1,10 +1,12 @@
 # Financial Intelligence Platform — Current State
 
-*Last updated: 2026-07-02*
+*Last updated: 2026-07-08*
 
 ## What's Built
 
-A batch-driven FX forecasting and research platform that generates 4H EUR/USD probabilistic forecasts using historical similarity matching, persists all outputs as an immutable research archive, and evaluates forecast accuracy automatically. The platform runs every 4 hours, produces directional probability forecasts (UP/DOWN/FLAT), serves them via a REST API with real-time tradeability evaluation, and maintains a permanent research archive of forecasts, evaluations, and similarity matches for longitudinal analysis.
+A batch-driven FX forecasting and research platform that generates 4H probabilistic forecasts using historical similarity matching, persists all outputs as an immutable research archive, and evaluates forecast accuracy automatically. The platform runs every 4 hours, produces directional probability forecasts (UP/DOWN/FLAT), serves them via a REST API with real-time tradeability evaluation, and maintains a permanent research archive of forecasts, evaluations, and similarity matches for longitudinal analysis.
+
+Asset configuration is centralised in the **Research Asset Registry** (`src/config/research-assets.ts`) — a single typed module that defines which assets are processed, which engines run, and which providers are used. Adding a new market (e.g., GBPUSD) is a configuration-only change.
 
 ## Architecture (Live)
 
@@ -114,10 +116,11 @@ ingestion → fingerprint → topology → regime_v2 → similarity (+ archive) 
 
 ## Test Suite
 
-- **1071 tests** across 72 test files — all passing
-- 35 property-based test files (fast-check)
+- **1397 tests** across 100 test files — all passing
+- 35+ property-based test files (fast-check)
 - 5 integration test files (batch pipeline, API endpoints, boundary enforcement, research persist wiring, research archive lifecycle)
 - 1 migration test file
+- 8 registry property-based tests (schema invariants, uniqueness, filter/sort, lookup, enum generation)
 - TypeScript strict mode, zero compile errors
 
 ## What's Working
@@ -138,7 +141,12 @@ ingestion → fingerprint → topology → regime_v2 → similarity (+ archive) 
 14. ✓ Experimentation engine for A/B engine testing with production isolation (Phase 5)
 15. ✓ Support/Resistance Topology Engine — deterministic structural levels (Phase 6)
 16. ✓ Extended market features — rolling trend, ATR percentile, volatility regime score, session stats, correlations, macro state, sentiment summary (Phase 7)
-17. ✓ Regime Engine v2 — 9 regime types (trend, ranging, expansion, contraction, macro_driven, breakout, reversal, accumulation, distribution) with structured explanations (Phase 8)
+17. ✓ Regime Engine v2 — 9 regime types with structured explanations (Phase 8)
+18. ✓ Research Asset Registry — centralised typed configuration for all tradeable assets (Phase 9)
+19. ✓ Registry-driven batch pipeline — engine participation map drives routing, no asset-class conditionals
+20. ✓ Registry-driven API routes — asset validation from registry, pricePrecision for formatting
+21. ✓ Registry-driven OpenAPI generator — dynamic enum injection from registry at build time
+22. ✓ CI/CD via Cloud Build — automated test → build → push → deploy pipeline
 
 ## Known Limitations / Not Yet Implemented
 
@@ -152,12 +160,11 @@ ingestion → fingerprint → topology → regime_v2 → similarity (+ archive) 
 - **Response mode filtering**: Middleware exists but not applied to routes
 - **Edge caching**: Middleware exists but not applied to routes
 - **Gemini integration**: SDK configured, not used in pipeline (future: explain mode)
-- **Multi-asset support**: Schema supports it, only EUR/USD configured
+- **Multi-asset processing**: Registry infrastructure in place — adding a new asset is a single config entry, but only EUR/USD is configured with historical data
 - **Macro/sentiment data in fingerprints**: L4/L5 vectors use neutral defaults (no live macro fetch in batch)
 
 ### Infrastructure
 - **No frontend/website**: Only a local single-file HTML dashboard
-- **No CI/CD pipeline**: Manual docker build + push + deploy
 - **No monitoring/alerting**: No Cloud Monitoring dashboards or alerts
 - **No rate limiting on API**: Middleware exists but not applied
 - **Cost tracking**: Not instrumented
@@ -167,7 +174,10 @@ ingestion → fingerprint → topology → regime_v2 → similarity (+ archive) 
 ```
 src/
 ├── api/               Express routes + middleware (auth, response-filter, edge-cache)
-├── config/            Environment vars + constants
+├── config/            Environment vars, constants, research asset registry
+│   ├── env.ts                     Environment variable loading
+│   ├── constants.ts               Platform constants
+│   └── research-assets.ts         Research Asset Registry — single source of truth for all assets
 ├── engines/           Pure computation engines
 │   ├── fingerprint-engine.ts      Fingerprint generation + extended market features (Phase 7)
 │   ├── similarity-engine.ts       Regime-weighted cosine similarity matching
@@ -188,17 +198,23 @@ src/
 │   ├── ingestion/         Data ingestion + macro/sentiment fetchers
 │   ├── cache/             Cache writer for serving layer
 │   ├── observability/     Trace emitter (wired into all stages, Phase 5)
-│   ├── pipeline/          Batch orchestrator
+│   ├── pipeline/          Batch orchestrator (registry-driven engine participation)
 │   └── versioning/        Engine version management
 ├── types/             TypeScript interfaces + enums
 ├── api-entry.ts       Cloud Run API entry point
-└── batch-entry.ts     Cloud Run Job entry point (12-stage pipeline + evaluation)
+└── batch-entry.ts     Cloud Run Job entry point (registry-driven, 12-stage pipeline + evaluation)
 
-tests/                 1071 tests (unit, property, integration, migration)
+scripts/
+├── generate-openapi.ts    Build-time OpenAPI spec generation (injects asset enum from registry)
+├── debug-pipeline.ts      Manual pipeline debugging tool
+├── seed-historical-data.ts  Historical data seeder
+└── __tests__/             Script unit tests
+
+tests/                 1397 tests (unit, property, integration, migration)
 dashboard/             Single-file HTML dashboard (queries API + Supabase for research data)
-scripts/               Seed scripts (historical data)
-supabase/migrations/   10 SQL migration files (4 original + 5 research tables + 1 engine version seed)
+supabase/migrations/   15 SQL migration files
 deploy/                Cloud Run + Scheduler config
+cloudbuild.yaml        CI/CD pipeline (test → build → push → deploy)
 ```
 
 ## Cost (Estimated Monthly)
@@ -219,8 +235,7 @@ deploy/                Cloud Run + Scheduler config
 2. **Connect live market data** — Real spread/liquidity feed for tradeability
 3. **Activate Confidence Engine v2 in production** — Switch from v1 dampener to evidence-based v2
 4. **Enable topology in similarity scoring** — Increase topology layer weight from 0.0 to a tuned value
-5. **Multi-asset** — Add GBP/USD, USD/JPY, etc.
-6. **CI/CD** — Cloud Build trigger on git push
-7. **Monitoring/Alerting** — Cloud Monitoring dashboards for batch health and API latency
-8. **Historical Replay** — Tooling to re-execute past batches with frozen engine versions
-9. **Web frontend** — React or Next.js app replacing the local HTML dashboard
+5. **Add second asset (GBPUSD)** — Registry entry + historical data seed + partition
+6. **Monitoring/Alerting** — Cloud Monitoring dashboards for batch health and API latency
+7. **Historical Replay** — Tooling to re-execute past batches with frozen engine versions
+8. **Web frontend** — React or Next.js app replacing the local HTML dashboard
