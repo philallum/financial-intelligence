@@ -29,9 +29,15 @@ interface MockQueryState {
 }
 
 function createMockSupabase(state: MockQueryState) {
-  let callCount = 0;
-
-  const createChain = (data: unknown[], isInnerJoin: boolean) => {
+  /**
+   * The evaluation engine uses a three-query pattern:
+   * 1. from('research_evaluations').select('forecast_id') → already-evaluated IDs
+   * 2. from('research_forecasts').select(fields).lt().order()[.not()].returns() → matured forecasts
+   * 3. from('market_outcomes').select(fields).in('fingerprint_id', [...]).returns() → outcomes
+   *
+   * We also handle from('research_evaluations').insert() for persisting results.
+   */
+  const createForecastsChain = (data: unknown[]) => {
     const chain: Record<string, unknown> = {};
     chain.select = vi.fn((_q: string) => {
       state.selectCalls.push({ table: 'research_forecasts', query: _q });
@@ -41,21 +47,49 @@ function createMockSupabase(state: MockQueryState) {
     chain.not = vi.fn(() => chain);
     chain.order = vi.fn(() => chain);
     chain.returns = vi.fn(() => Promise.resolve({ data, error: null }));
-    // Allow the chain to be awaited directly (for queries without .returns())
     chain.then = (resolve: (v: unknown) => void, reject: (e: unknown) => void) =>
       Promise.resolve({ data, error: null }).then(resolve, reject);
-    chain.insert = vi.fn((rows: unknown[]) => {
-      state.insertedRows.push(...(Array.isArray(rows) ? rows : [rows]));
-      return Promise.resolve({ error: state.insertError });
-    });
     return chain;
   };
+
+  const createOutcomesChain = (forecasts: unknown[]) => {
+    // Derive outcome rows from the matured forecasts that have market_outcomes
+    const outcomes = (forecasts as Array<Record<string, unknown>>)
+      .filter((f) => f.market_outcomes != null)
+      .map((f) => {
+        const mo = f.market_outcomes as Record<string, unknown>;
+        return {
+          outcome_id: mo.outcome_id,
+          fingerprint_id: f.fingerprint_id,
+          net_return_pips: mo.net_return_pips,
+          timestamp_utc: mo.timestamp_utc,
+        };
+      });
+
+    const chain: Record<string, unknown> = {};
+    chain.select = vi.fn(() => chain);
+    chain.in = vi.fn(() => chain);
+    chain.returns = vi.fn(() => Promise.resolve({ data: outcomes, error: null }));
+    chain.then = (resolve: (v: unknown) => void, reject: (e: unknown) => void) =>
+      Promise.resolve({ data: outcomes, error: null }).then(resolve, reject);
+    return chain;
+  };
+
+  let evaluationsCallCount = 0;
 
   const supabase = {
     from: vi.fn((table: string) => {
       if (table === 'research_evaluations') {
+        evaluationsCallCount++;
+        if (evaluationsCallCount === 1) {
+          // First call: select('forecast_id') to get already-evaluated IDs
+          return {
+            select: vi.fn(() => Promise.resolve({ data: [], error: null })),
+          };
+        }
+        // Subsequent calls: insert for persisting results
         return {
-          select: vi.fn(() => ({ data: [], error: null })),
+          select: vi.fn(() => Promise.resolve({ data: [], error: null })),
           insert: vi.fn((rows: unknown) => {
             const rowArray = Array.isArray(rows) ? rows : [rows];
             state.insertedRows.push(...rowArray);
@@ -63,14 +97,20 @@ function createMockSupabase(state: MockQueryState) {
           }),
         };
       }
-      // research_forecasts
-      callCount++;
-      if (callCount === 1) {
-        // First call: with inner join (matured forecasts with outcomes)
-        return createChain(state.maturedForecasts, true);
+      if (table === 'market_outcomes') {
+        return createOutcomesChain(state.maturedForecasts);
       }
-      // Second call: without inner join (all matured forecasts)
-      return createChain(state.allForecasts, false);
+      // research_forecasts — return forecasts WITHOUT market_outcomes embedded
+      const plainForecasts = (state.maturedForecasts as Array<Record<string, unknown>>).map((f) => ({
+        id: f.id,
+        batch_id: f.batch_id,
+        fingerprint_id: f.fingerprint_id,
+        forecast_expiry: f.forecast_expiry,
+        direction_probabilities: f.direction_probabilities,
+        expected_move_pips: f.expected_move_pips,
+        confidence_final: f.confidence_final,
+      }));
+      return createForecastsChain(plainForecasts);
     }),
   };
 

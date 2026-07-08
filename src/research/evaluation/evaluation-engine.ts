@@ -82,7 +82,30 @@ export function computeCalibrationBucket(confidenceFinal: number): string {
 }
 
 /**
- * Row shape returned from the research_forecasts + market_outcomes query.
+ * Row shape for a matured forecast from research_forecasts.
+ */
+interface MaturedForecast {
+  id: string;
+  batch_id: string;
+  fingerprint_id: string;
+  forecast_expiry: string;
+  direction_probabilities: { up: number; down: number; flat: number };
+  expected_move_pips: number;
+  confidence_final: number;
+}
+
+/**
+ * Row shape returned from market_outcomes lookup.
+ */
+interface OutcomeRow {
+  outcome_id: string;
+  fingerprint_id: string;
+  net_return_pips: number;
+  timestamp_utc: string;
+}
+
+/**
+ * Combined forecast + outcome for processing.
  */
 interface ForecastWithOutcome {
   id: string;
@@ -103,41 +126,30 @@ interface ForecastWithOutcome {
  * Creates an EvaluationEngine backed by a Supabase client.
  *
  * The engine queries matured forecasts (forecast_expiry < NOW()) that have not
- * yet been evaluated, joins against market_outcomes for the realised return,
- * computes all accuracy metrics deterministically, and persists EvaluationRecords
- * to the research_evaluations table.
+ * yet been evaluated, then separately queries market_outcomes for matching
+ * fingerprint_ids, joins them in application code, computes all accuracy metrics
+ * deterministically, and persists EvaluationRecords to the research_evaluations table.
  */
 export function createEvaluationEngine(supabase: SupabaseClient): EvaluationEngine {
   return {
     async evaluateMaturedForecasts(batchId: string): Promise<EvaluationRecord[]> {
-      // 1. Query matured forecasts that haven't been evaluated yet
-      // Deterministic ordering by fingerprint_id ensures reproducible evaluation order (Req 2.6)
-      const { data: maturedForecasts, error: queryError } = await supabase
-        .from('research_forecasts')
-        .select(`
-          id,
-          batch_id,
-          fingerprint_id,
-          forecast_expiry,
-          direction_probabilities,
-          expected_move_pips,
-          confidence_final,
-          market_outcomes!inner (
-            outcome_id,
-            net_return_pips,
-            timestamp_utc
-          )
-        `)
-        .lt('forecast_expiry', new Date().toISOString())
-        .not('id', 'in', supabase
-          .from('research_evaluations')
-          .select('forecast_id'))
-        .order('fingerprint_id', { ascending: true })
-        .returns<ForecastWithOutcome[]>();
+      // 1. First, get all already-evaluated forecast IDs to exclude them
+      const { data: evaluatedRows, error: evalLookupError } = await supabase
+        .from('research_evaluations')
+        .select('forecast_id');
 
-      // Also query forecasts without outcomes (for timeout marking)
-      // Deterministic ordering by fingerprint_id (Req 2.6)
-      const { data: forecastsWithoutOutcome, error: noOutcomeError } = await supabase
+      if (evalLookupError) {
+        console.error(
+          `[EvaluationEngine] Failed to query existing evaluations: ${evalLookupError.message}`,
+        );
+        return [];
+      }
+
+      const evaluatedIds = new Set((evaluatedRows ?? []).map((r: { forecast_id: string }) => r.forecast_id));
+
+      // 2. Query all matured forecasts
+      // Deterministic ordering by fingerprint_id ensures reproducible evaluation order (Req 2.6)
+      let forecastQuery = supabase
         .from('research_forecasts')
         .select(`
           id,
@@ -149,10 +161,16 @@ export function createEvaluationEngine(supabase: SupabaseClient): EvaluationEngi
           confidence_final
         `)
         .lt('forecast_expiry', new Date().toISOString())
-        .not('id', 'in', supabase
-          .from('research_evaluations')
-          .select('forecast_id'))
         .order('fingerprint_id', { ascending: true });
+
+      // If there are already-evaluated IDs, exclude them
+      if (evaluatedIds.size > 0) {
+        const idArray = [...evaluatedIds];
+        forecastQuery = forecastQuery.not('id', 'in', `(${idArray.join(',')})`);
+      }
+
+      const { data: allMaturedForecasts, error: queryError } = await forecastQuery
+        .returns<MaturedForecast[]>();
 
       if (queryError) {
         console.error(
@@ -161,11 +179,58 @@ export function createEvaluationEngine(supabase: SupabaseClient): EvaluationEngi
         return [];
       }
 
+      if (!allMaturedForecasts || allMaturedForecasts.length === 0) {
+        console.log(`[EvaluationEngine] No matured forecasts to evaluate — batch_id=${batchId}`);
+        return [];
+      }
+
+      // 2. Query matching outcomes from market_outcomes using fingerprint_ids
+      const fingerprintIds = [...new Set(allMaturedForecasts.map(f => f.fingerprint_id))];
+      const { data: outcomes, error: outcomeError } = await supabase
+        .from('market_outcomes')
+        .select('outcome_id, fingerprint_id, net_return_pips, timestamp_utc')
+        .in('fingerprint_id', fingerprintIds)
+        .returns<OutcomeRow[]>();
+
+      if (outcomeError) {
+        console.warn(
+          `[EvaluationEngine] Failed to query market_outcomes: ${outcomeError.message}`,
+        );
+      }
+
+      // 3. Build a lookup map: fingerprint_id → outcome
+      const outcomeMap = new Map<string, OutcomeRow>();
+      if (outcomes) {
+        for (const outcome of outcomes) {
+          outcomeMap.set(outcome.fingerprint_id, outcome);
+        }
+      }
+
+      // 4. Separate forecasts into those with outcomes and those without
+      const forecastsWithOutcome: ForecastWithOutcome[] = [];
+      const forecastsWithoutOutcome: MaturedForecast[] = [];
+
+      for (const forecast of allMaturedForecasts) {
+        const outcome = outcomeMap.get(forecast.fingerprint_id);
+        if (outcome) {
+          forecastsWithOutcome.push({
+            ...forecast,
+            market_outcomes: {
+              outcome_id: outcome.outcome_id,
+              net_return_pips: outcome.net_return_pips,
+              timestamp_utc: outcome.timestamp_utc,
+            },
+          });
+        } else {
+          forecastsWithoutOutcome.push(forecast);
+        }
+      }
+
       const evaluationRecords: EvaluationRecord[] = [];
 
-      // 2. Process forecasts that have matched outcomes
-      if (maturedForecasts && maturedForecasts.length > 0) {
-        for (const forecast of maturedForecasts) {
+      // 5. Process forecasts that have matched outcomes
+      if (forecastsWithOutcome.length > 0) {
+        for (const forecast of forecastsWithOutcome) {
           if (!forecast.market_outcomes) continue;
 
           const outcome = forecast.market_outcomes;
@@ -209,13 +274,11 @@ export function createEvaluationEngine(supabase: SupabaseClient): EvaluationEngi
         }
       }
 
-      // 3. Handle forecasts that have timed out (no outcome after 8h)
-      if (!noOutcomeError && forecastsWithoutOutcome) {
+      // 6. Handle forecasts that have timed out (no outcome after 8h)
+      if (forecastsWithoutOutcome.length > 0) {
         const now = new Date();
 
         for (const forecast of forecastsWithoutOutcome) {
-          // Skip forecasts already handled with outcomes above
-          if (maturedForecasts?.some((f) => f.id === forecast.id)) continue;
 
           const expiryDate = new Date(forecast.forecast_expiry);
           const hoursSinceExpiry =
@@ -252,7 +315,7 @@ export function createEvaluationEngine(supabase: SupabaseClient): EvaluationEngi
         }
       }
 
-      // 4. Persist evaluation records
+      // 7. Persist evaluation records
       if (evaluationRecords.length > 0) {
         const rows = evaluationRecords.map((r) => ({
           forecast_id: r.forecast_id,

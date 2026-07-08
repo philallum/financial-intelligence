@@ -384,21 +384,47 @@ describe('Research Archive Lifecycle Integration', () => {
         },
       };
 
+      // Plain forecast (without embedded market_outcomes) for the research_forecasts query
+      const plainForecast = {
+        id: maturedForecast.id,
+        batch_id: maturedForecast.batch_id,
+        fingerprint_id: maturedForecast.fingerprint_id,
+        forecast_expiry: maturedForecast.forecast_expiry,
+        direction_probabilities: maturedForecast.direction_probabilities,
+        expected_move_pips: maturedForecast.expected_move_pips,
+        confidence_final: maturedForecast.confidence_final,
+      };
+
+      // Outcome row for the market_outcomes query
+      const outcomeRow = {
+        outcome_id: maturedForecast.market_outcomes.outcome_id,
+        fingerprint_id: maturedForecast.fingerprint_id,
+        net_return_pips: maturedForecast.market_outcomes.net_return_pips,
+        timestamp_utc: maturedForecast.market_outcomes.timestamp_utc,
+      };
+
       const insertCalls: unknown[] = [];
       const mockFrom = vi.fn().mockImplementation((table: string) => {
         if (table === 'research_forecasts') {
           return {
             select: vi.fn().mockReturnValue({
               lt: vi.fn().mockReturnValue({
-                not: vi.fn().mockReturnValue({
-                  order: vi.fn().mockReturnValue({
-                    returns: vi.fn().mockResolvedValue({
-                      data: [maturedForecast],
-                      error: null,
-                    }),
+                order: vi.fn().mockReturnValue({
+                  returns: vi.fn().mockResolvedValue({
+                    data: [plainForecast],
+                    error: null,
                   }),
-                  // Also handle the second query (without .returns)
-                  data: [maturedForecast],
+                }),
+              }),
+            }),
+          };
+        }
+        if (table === 'market_outcomes') {
+          return {
+            select: vi.fn().mockReturnValue({
+              in: vi.fn().mockReturnValue({
+                returns: vi.fn().mockResolvedValue({
+                  data: [outcomeRow],
                   error: null,
                 }),
               }),
@@ -407,9 +433,7 @@ describe('Research Archive Lifecycle Integration', () => {
         }
         if (table === 'research_evaluations') {
           return {
-            select: vi.fn().mockReturnValue({
-              eq: vi.fn().mockResolvedValue({ data: [], error: null }),
-            }),
+            select: vi.fn().mockResolvedValue({ data: [], error: null }),
             insert: vi.fn().mockImplementation((data: unknown) => {
               insertCalls.push(data);
               return { error: null };
@@ -451,38 +475,34 @@ describe('Research Archive Lifecycle Integration', () => {
       const mockFrom = vi.fn().mockImplementation((table: string) => {
         if (table === 'research_forecasts') {
           return {
-            select: vi.fn().mockImplementation((selectStr: string) => {
-              // Query WITH inner join (market_outcomes) returns empty
-              if (selectStr.includes('market_outcomes')) {
-                return {
-                  lt: vi.fn().mockReturnValue({
-                    not: vi.fn().mockReturnValue({
-                      order: vi.fn().mockReturnValue({
-                        returns: vi.fn().mockResolvedValue({ data: [], error: null }),
-                      }),
-                    }),
-                  }),
-                };
-              }
-              // Query WITHOUT inner join returns the timed-out forecast
-              return {
-                lt: vi.fn().mockReturnValue({
-                  not: vi.fn().mockReturnValue({
-                    order: vi.fn().mockResolvedValue({
-                      data: [forecastWithoutOutcome],
-                      error: null,
-                    }),
+            select: vi.fn().mockReturnValue({
+              lt: vi.fn().mockReturnValue({
+                order: vi.fn().mockReturnValue({
+                  returns: vi.fn().mockResolvedValue({
+                    data: [forecastWithoutOutcome],
+                    error: null,
                   }),
                 }),
-              };
+              }),
+            }),
+          };
+        }
+        if (table === 'market_outcomes') {
+          // No outcomes for this fingerprint
+          return {
+            select: vi.fn().mockReturnValue({
+              in: vi.fn().mockReturnValue({
+                returns: vi.fn().mockResolvedValue({
+                  data: [],
+                  error: null,
+                }),
+              }),
             }),
           };
         }
         if (table === 'research_evaluations') {
           return {
-            select: vi.fn().mockReturnValue({
-              eq: vi.fn().mockResolvedValue({ data: [], error: null }),
-            }),
+            select: vi.fn().mockResolvedValue({ data: [], error: null }),
             insert: vi.fn().mockImplementation((data: unknown) => {
               insertCalls.push(data);
               return { error: null };

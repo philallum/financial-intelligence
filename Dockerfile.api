@@ -20,6 +20,7 @@ RUN npm ci
 # Copy source code and TypeScript config
 COPY tsconfig.json ./
 COPY src/ ./src/
+COPY scripts/ ./scripts/
 
 # Compile TypeScript to JavaScript
 RUN npm run build
