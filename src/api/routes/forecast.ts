@@ -19,9 +19,7 @@ import { computeTradeabilityFromInput } from '../../engines/tradeability-engine.
 import { successResponse, errorResponse } from '../utils/response-envelope.js';
 import type { Forecast } from '../../types/index.js';
 import { Session } from '../../types/enums.js';
-
-/** Assets supported by the MVP */
-const SUPPORTED_ASSETS = ['EURUSD'] as const;
+import { getActiveSymbols, getAssetBySymbol } from '../../config/research-assets.js';
 
 /** IP-based rate limit: 60 requests per minute for anonymous requests (Req 13.5) */
 const ANON_RATE_LIMIT = 60;
@@ -97,16 +95,20 @@ export function createForecastRouter(options: ForecastRouteOptions): Router {
     const requestId = req.requestId || 'unknown';
 
     // Req 14.1: Check if asset is supported
-    if (!SUPPORTED_ASSETS.includes(upperAsset as typeof SUPPORTED_ASSETS[number])) {
+    const activeSymbols = getActiveSymbols();
+    if (!activeSymbols.includes(upperAsset)) {
       res.status(400).json(
         errorResponse(
           'asset_not_supported',
-          `Asset "${upperAsset}" is not supported. Supported assets: ${SUPPORTED_ASSETS.join(', ')}`,
+          `Asset "${upperAsset}" is not supported. Supported assets: ${activeSymbols.join(', ')}`,
           requestId
         )
       );
       return;
     }
+
+    // Retrieve asset metadata from registry for price formatting
+    const assetConfig = getAssetBySymbol(upperAsset)!;
 
     // Req 13.5: IP-based rate limit for anonymous requests
     if (req.anonymous) {

@@ -10,9 +10,7 @@
 import { Router } from 'express';
 import type { SupabaseClient } from '@supabase/supabase-js';
 import { successResponse, errorResponse } from '../utils/response-envelope.js';
-
-/** Assets supported by the MVP */
-const SUPPORTED_ASSETS = ['EURUSD'] as const;
+import { getActiveSymbols } from '../../config/research-assets.js';
 
 export interface StateRouteOptions {
   supabase: SupabaseClient;
@@ -28,11 +26,12 @@ export function createStateRouter(options: StateRouteOptions): Router {
     const requestId = req.requestId ?? 'unknown';
 
     // Check if asset is supported
-    if (!SUPPORTED_ASSETS.includes(upperAsset as typeof SUPPORTED_ASSETS[number])) {
+    const activeSymbols = getActiveSymbols();
+    if (!activeSymbols.includes(upperAsset)) {
       res.status(400).json(
         errorResponse(
           'asset_not_supported',
-          `Asset "${upperAsset}" is not supported. Supported assets: ${SUPPORTED_ASSETS.join(', ')}`,
+          `Asset "${upperAsset}" is not supported. Supported assets: ${activeSymbols.join(', ')}`,
           requestId,
         ),
       );

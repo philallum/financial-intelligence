@@ -20,6 +20,7 @@ import { env } from '../../config/env.js';
 import { BATCH_TIMEOUT_MS } from '../../config/constants.js';
 import { BatchStatus } from '../../types/enums.js';
 import { traceEngineExecution } from '../observability/trace-emitter.js';
+import type { EngineParticipationMap } from '../../config/research-assets.js';
 import type {
   BatchRun,
   IngestionInput,
@@ -124,6 +125,10 @@ export interface BatchTriggerInput {
   asset: string;
   timeframe: string;
   candle_boundary: string;
+  /** Provider-specific symbol for data fetching (e.g., "EUR/USD" for TwelveData). */
+  providerSymbol?: string;
+  /** Engine participation flags — when undefined, all engines run (backward compatible). */
+  engineParticipation?: EngineParticipationMap;
 }
 
 // =============================================================================
@@ -290,6 +295,13 @@ export class BatchOrchestrator {
    * Execute all 7 pipeline stages sequentially.
    * On any stage failure, halt downstream and return failure result.
    *
+   * Engine participation controls which stages run:
+   * - fingerprint always runs (it's the foundation)
+   * - topology runs only if engineParticipation.fingerprint is true
+   * - If similarity is false → skip similarity, outcome, forecast, confidence, tradeability → return early
+   * - If confidence is false → skip confidence but still run cache_write with placeholder confidence
+   * - No conditional logic based on AssetClass — only the engine map drives routing (Req 4.4)
+   *
    * Each stage handler is wrapped with `traceEngineExecution` to emit structured
    * execution traces. Trace emission never interrupts the pipeline (Req 12.3).
    */
@@ -300,6 +312,16 @@ export class BatchOrchestrator {
     engineVersions: Record<string, string>,
   ): Promise<PipelineResult> {
     const completedStages: PipelineStage[] = [];
+
+    // Default: all engines run when engineParticipation is not provided (backward compatible)
+    const engines: EngineParticipationMap = input.engineParticipation ?? {
+      fingerprint: true,
+      similarity: true,
+      confidence: true,
+      tradeability: true,
+      sentiment: true,
+      macro: true,
+    };
 
     /** Helper: resolve engine version for a given stage name. */
     const versionOf = (stage: string): string => engineVersions[stage] ?? 'unknown';
@@ -327,7 +349,7 @@ export class BatchOrchestrator {
       return this.buildFailureResult(batchId, 'ingestion', error, completedStages, startTime);
     }
 
-    // Stage 2: Fingerprint
+    // Stage 2: Fingerprint (always runs — it's the foundation)
     let fingerprint: Fingerprint;
     try {
       const fingerprintInput: FingerprintInput = {
@@ -346,8 +368,10 @@ export class BatchOrchestrator {
       return this.buildFailureResult(batchId, 'fingerprint', error, completedStages, startTime);
     }
 
-    // Stage 2.5: Topology (optional, research-only — failure never halts pipeline)
-    if (this.handlers.topology) {
+    // Stage 2.5: Topology (optional, research-only — only runs if engines.fingerprint is true)
+    // Topology uses fingerprint output, so it's gated by the fingerprint participation flag.
+    // Failure never halts pipeline.
+    if (engines.fingerprint && this.handlers.topology) {
       try {
         await traceEngineExecution(
           (inp: { fingerprintId: string; asset: string }) =>
@@ -378,6 +402,17 @@ export class BatchOrchestrator {
           `[BatchOrchestrator] Regime v2 stage failed (non-blocking): ${error instanceof Error ? error.message : String(error)}`,
         );
       }
+    }
+
+    // Engine dependency chain: if similarity is false, skip similarity + all downstream
+    // stages (outcome, forecast, confidence, tradeability) and return early as completed.
+    if (!engines.similarity) {
+      return {
+        batch_id: batchId,
+        status: BatchStatus.COMPLETED,
+        completed_stages: completedStages,
+        total_duration_ms: Date.now() - startTime,
+      };
     }
 
     // Stage 3: Similarity
@@ -436,43 +471,53 @@ export class BatchOrchestrator {
       return this.buildFailureResult(batchId, 'forecast', error, completedStages, startTime);
     }
 
-    // Stage 6: Confidence
+    // Stage 6: Confidence — only runs if engines.confidence is true
     let confidenceOutput: ConfidenceOutput;
-    try {
-      const confidenceInput: ConfidenceInput = {
-        up_probability: outcomeDistribution.direction_probability.up,
-        down_probability: outcomeDistribution.direction_probability.down,
-        flat_probability: outcomeDistribution.direction_probability.flat,
-        sample_size: outcomeDistribution.sample_size,
-        variance: outcomeDistribution.volatility_profile.std_dev,
-        skew: 0, // Derived from distribution shape — placeholder
-        kurtosis: 0, // Derived from distribution shape — placeholder
-        mean_similarity: 0.8, // Derived from similarity matches — placeholder
-        similarity_spread: 0.2, // Derived from similarity matches — placeholder
-        top_match_density: 0.7, // Derived from similarity matches — placeholder
-        regime_metadata: {
-          regime_match_ratio: outcomeDistribution.confidence_inputs.regime_consistency,
-          dominant_regime: 'NORMAL_RANGING',
-          regime_diversity: 1 - outcomeDistribution.confidence_inputs.regime_consistency,
-        },
-      };
-      confidenceOutput = await traceEngineExecution(
-        (inp: ConfidenceInput) => this.handlers.confidence(inp, fingerprint.fingerprint_id),
-        confidenceInput,
-        {
-          engine_name: 'confidence',
-          engine_version: versionOf('confidence'),
-          batch_id: batchId,
+    if (engines.confidence) {
+      try {
+        const confidenceInput: ConfidenceInput = {
+          up_probability: outcomeDistribution.direction_probability.up,
+          down_probability: outcomeDistribution.direction_probability.down,
+          flat_probability: outcomeDistribution.direction_probability.flat,
           sample_size: outcomeDistribution.sample_size,
-        },
-        this.supabase,
-      );
-      completedStages.push('confidence');
-    } catch (error) {
-      return this.buildFailureResult(batchId, 'confidence', error, completedStages, startTime);
+          variance: outcomeDistribution.volatility_profile.std_dev,
+          skew: 0, // Derived from distribution shape — placeholder
+          kurtosis: 0, // Derived from distribution shape — placeholder
+          mean_similarity: 0.8, // Derived from similarity matches — placeholder
+          similarity_spread: 0.2, // Derived from similarity matches — placeholder
+          top_match_density: 0.7, // Derived from similarity matches — placeholder
+          regime_metadata: {
+            regime_match_ratio: outcomeDistribution.confidence_inputs.regime_consistency,
+            dominant_regime: 'NORMAL_RANGING',
+            regime_diversity: 1 - outcomeDistribution.confidence_inputs.regime_consistency,
+          },
+        };
+        confidenceOutput = await traceEngineExecution(
+          (inp: ConfidenceInput) => this.handlers.confidence(inp, fingerprint.fingerprint_id),
+          confidenceInput,
+          {
+            engine_name: 'confidence',
+            engine_version: versionOf('confidence'),
+            batch_id: batchId,
+            sample_size: outcomeDistribution.sample_size,
+          },
+          this.supabase,
+        );
+        completedStages.push('confidence');
+      } catch (error) {
+        return this.buildFailureResult(batchId, 'confidence', error, completedStages, startTime);
+      }
+    } else {
+      // Confidence skipped — use placeholder values for cache_write
+      confidenceOutput = {
+        confidence_raw: 0,
+        sample_weight: 0,
+        regime_stability: 0,
+        confidence_final: 0,
+      };
     }
 
-    // Stage 7: Cache Write
+    // Stage 7: Cache Write (always runs if we reach this point)
     try {
       const cacheWriteInput: CacheWriteInput = {
         batch_id: batchId,
@@ -493,7 +538,7 @@ export class BatchOrchestrator {
       return this.buildFailureResult(batchId, 'cache_write', error, completedStages, startTime);
     }
 
-    // All 7 stages succeeded
+    // All applicable stages succeeded
 
     // Post-pipeline: Research persistence (fire-and-forget, never halts batch)
     if (this.handlers.research_persist) {

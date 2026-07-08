@@ -10,9 +10,7 @@
 import { Router } from 'express';
 import type { SupabaseClient } from '@supabase/supabase-js';
 import { errorResponse } from '../utils/response-envelope.js';
-
-/** Assets supported by the MVP */
-const SUPPORTED_ASSETS = ['EURUSD'] as const;
+import { getActiveSymbols } from '../../config/research-assets.js';
 
 /** Pagination defaults and bounds */
 const PAGINATION = {
@@ -60,11 +58,12 @@ export function createSimilarityRouter(options: SimilarityRouteOptions): Router 
     const requestId = (req as any).requestId ?? '';
 
     // Check if asset is supported
-    if (!SUPPORTED_ASSETS.includes(upperAsset as typeof SUPPORTED_ASSETS[number])) {
+    const activeSymbols = getActiveSymbols();
+    if (!activeSymbols.includes(upperAsset)) {
       res.status(400).json(
         errorResponse(
           'asset_not_supported',
-          `Asset "${upperAsset}" is not supported. Supported assets: ${SUPPORTED_ASSETS.join(', ')}`,
+          `Asset "${upperAsset}" is not supported. Supported assets: ${activeSymbols.join(', ')}`,
           requestId,
         ),
       );

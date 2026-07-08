@@ -7,11 +7,14 @@
  * Behavior:
  * - Creates a Supabase client with service role credentials
  * - Instantiates the BatchOrchestrator with real stage handlers
- * - Executes the pipeline for configured assets (EUR/USD MVP)
- * - Exits with code 0 on success, 1 on failure
+ * - Retrieves processable assets (ACTIVE + BETA) from the research asset registry
+ * - Iterates over each asset and its supportedTimeframes
+ * - Passes provider symbol and engine participation map to the orchestrator
+ * - Exits with code 0 on success or zero processable assets
+ * - Exits with code 1 if any asset/timeframe combination fails
  * - Respects the 15-minute global timeout (BATCH_TIMEOUT_MS)
  *
- * Requirements: 12.1, 12.2, 14.1
+ * Requirements: 6.1, 6.2, 6.3, 6.4, 6.5, 6.6, 6.7, 9.1, 11.1, 11.4, 12.1, 12.2, 14.1
  */
 
 import { createClient, type SupabaseClient } from '@supabase/supabase-js';
@@ -25,9 +28,7 @@ import { traceEngineExecution } from './services/observability/trace-emitter.js'
 import { computeTopology } from './engines/topology-engine.js';
 import { classifyRegimeV2 } from './engines/regime-engine-v2.js';
 import type { OHLC } from './types/index.js';
-
-/** Assets to process in the batch pipeline (MVP: EUR/USD only). */
-const BATCH_ASSETS = [{ asset: 'EURUSD', timeframe: '4H' }];
+import { getProcessableAssets } from './config/research-assets.js';
 
 /**
  * Compute the current candle boundary timestamp.
@@ -351,7 +352,15 @@ function createStageHandlers(supabase: SupabaseClient): StageHandlers {
 async function main(): Promise<void> {
   console.log('[BatchEntry] Starting batch pipeline execution');
   console.log(`[BatchEntry] Timeout: ${BATCH_TIMEOUT_MS}ms`);
-  console.log(`[BatchEntry] Assets: ${BATCH_ASSETS.map((a) => a.asset).join(', ')}`);
+
+  const processableAssets = getProcessableAssets();
+
+  if (processableAssets.length === 0) {
+    console.warn('[BatchEntry] No processable assets found in registry (ACTIVE or BETA). Exiting.');
+    process.exit(0);
+  }
+
+  console.log(`[BatchEntry] Assets: ${processableAssets.map((a) => a.symbol).join(', ')}`);
 
   const supabase = createClient(env.SUPABASE_URL, env.SUPABASE_SERVICE_ROLE_KEY);
   const handlers = createStageHandlers(supabase);
@@ -367,22 +376,31 @@ async function main(): Promise<void> {
 
   let hasFailure = false;
 
-  for (const { asset, timeframe } of BATCH_ASSETS) {
-    console.log(`[BatchEntry] Processing ${asset} (${timeframe})`);
+  for (const asset of processableAssets) {
+    for (const timeframe of asset.supportedTimeframes) {
+      console.log(`[BatchEntry] Processing ${asset.symbol} (${timeframe})`);
 
-    const result = await orchestrator.execute({
-      asset,
-      timeframe,
-      candle_boundary: candleBoundary,
-    });
+      try {
+        const result = await orchestrator.execute({
+          asset: asset.symbol,
+          timeframe,
+          candle_boundary: candleBoundary,
+          providerSymbol: asset.providers.twelveData,
+          engineParticipation: asset.engines,
+        });
 
-    console.log(`[BatchEntry] ${asset} result: ${result.status} (${result.total_duration_ms}ms)`);
+        console.log(`[BatchEntry] ${asset.symbol} (${timeframe}) result: ${result.status} (${result.total_duration_ms}ms)`);
 
-    if (result.status !== 'COMPLETED') {
-      console.error(`[BatchEntry] ${asset} failed: ${result.failure_detail}`);
-      hasFailure = true;
-    } else {
-      console.log(`[BatchEntry] ${asset} completed stages: ${result.completed_stages.join(' → ')}`);
+        if (result.status !== 'COMPLETED') {
+          console.error(`[BatchEntry] ${asset.symbol} (${timeframe}) failed: ${result.failure_detail}`);
+          hasFailure = true;
+        } else {
+          console.log(`[BatchEntry] ${asset.symbol} (${timeframe}) completed stages: ${result.completed_stages.join(' → ')}`);
+        }
+      } catch (error) {
+        console.error(`[BatchEntry] ${asset.symbol} (${timeframe}) threw an error:`, error);
+        hasFailure = true;
+      }
     }
   }
 
