@@ -24,7 +24,7 @@ import type {
   RegimeWeightMatrix,
   RegimeClassification,
 } from "../types/index.js";
-import { MAX_SIMILARITY_MATCHES } from "../config/constants.js";
+import { MAX_SIMILARITY_MATCHES, TOPOLOGY_SIMILARITY_WEIGHT } from "../config/constants.js";
 
 // =============================================================================
 // Constants
@@ -391,6 +391,34 @@ export function computeAggregateScore(
     layerScores.sentiment * weights.sentiment;
 
   return roundTo6Decimals(clamp(raw, 0, 1));
+}
+
+/**
+ * Compute a blended similarity score that incorporates topology similarity.
+ * Applied externally after computeAggregateScore — does NOT modify the aggregate logic.
+ *
+ * Formula: (1 - topologyWeight) * existingAggregateScore + topologyWeight * topologySimilarity
+ * Result is clamped to [0, 1] and rounded to 6 decimal places.
+ *
+ * If topologySimilarity is undefined or topologyWeight is 0, the existing score is returned unchanged.
+ *
+ * @param existingAggregateScore - The score from computeAggregateScore (0 to 1)
+ * @param topologySimilarity - Topology similarity value (0 to 1), or undefined if not available
+ * @param topologyWeight - Weight for topology blending (0 to 1)
+ * @returns Blended score bounded [0, 1], rounded to 6 decimal places
+ *
+ * Requirements: 2.4, 2.5
+ */
+export function computeBlendedScore(
+  existingAggregateScore: number,
+  topologySimilarity: number | undefined,
+  topologyWeight: number,
+): number {
+  if (topologySimilarity === undefined || topologyWeight === 0) {
+    return existingAggregateScore;
+  }
+  const blended = (1 - topologyWeight) * existingAggregateScore + topologyWeight * topologySimilarity;
+  return roundTo6Decimals(clamp(blended, 0, 1));
 }
 
 /**

@@ -15,7 +15,7 @@
 import { Router } from 'express';
 import type { Request, Response } from 'express';
 import type { SupabaseClient } from '@supabase/supabase-js';
-import { computeTradeabilityFromInput } from '../../engines/tradeability-engine.js';
+import { computeTradeabilityFromInput, getSessionDefaults } from '../../engines/tradeability-engine.js';
 import { successResponse, errorResponse } from '../utils/response-envelope.js';
 import type { Forecast } from '../../types/index.js';
 import { Session } from '../../types/enums.js';
@@ -150,12 +150,13 @@ export function createForecastRouter(options: ForecastRouteOptions): Router {
 
     // Inject runtime conditions and execute Tradeability Engine
     const session = getCurrentSession();
+    const defaults = getSessionDefaults(session, 'EURUSD');
     const tradeabilityResult = computeTradeabilityFromInput({
       forecast,
-      spread_pips: 1.5, // Default spread for MVP — would come from live feed
+      spread_pips: defaults.spreadPips,
       session_state: session,
-      live_liquidity_proxy: 0.75, // Default liquidity for MVP
-      news_risk_flag: false, // Default no news risk for MVP
+      live_liquidity_proxy: defaults.liquidityProxy,
+      news_risk_flag: false,
     });
 
     // Req 13.1, 13.2: Anonymous access returns restricted subset

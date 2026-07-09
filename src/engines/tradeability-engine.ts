@@ -489,6 +489,51 @@ function buildDegradedOutput(unavailableSources: string[]): TradeabilityOutputWi
 }
 
 // =============================================================================
+// Session Defaults (Fix 2: Session-aware tradeability defaults)
+// =============================================================================
+
+/**
+ * Session-aware default values for spread and liquidity when no live feed is connected.
+ */
+export interface SessionDefaults {
+  spreadPips: number;
+  liquidityProxy: number;
+}
+
+/**
+ * Get session-aware default spread and liquidity values for a given trading session.
+ *
+ * Pure function, deterministic, no side effects.
+ *
+ * Lookup logic:
+ * - NY session (includes London/NY overlap hours 12:00-15:00): { spreadPips: 1.0, liquidityProxy: 0.85 }
+ * - LONDON session (London-only hours 07:00-12:00): { spreadPips: 1.2, liquidityProxy: 0.85 }
+ * - ASIA session: { spreadPips: 1.5, liquidityProxy: 0.70 }
+ *
+ * @param session - Current trading session
+ * @param assetMarketHours - Asset identifier (e.g., 'EURUSD') — reserved for future per-asset config
+ * @returns SessionDefaults with spreadPips > 0 and liquidityProxy > 0
+ *
+ * Requirements: 2.3
+ */
+export function getSessionDefaults(session: Session, assetMarketHours: string): SessionDefaults {
+  switch (session) {
+    case Session.NY:
+      // NY session includes London/NY overlap (12:00-15:00 UTC) — tightest spreads
+      return { spreadPips: 1.0, liquidityProxy: 0.85 };
+    case Session.LONDON:
+      // London-only session (07:00-12:00 UTC)
+      return { spreadPips: 1.2, liquidityProxy: 0.85 };
+    case Session.ASIA:
+      // Asia session (21:00-07:00 UTC) — widest spreads, lower liquidity
+      return { spreadPips: 1.5, liquidityProxy: 0.70 };
+    default:
+      // Fallback: use Asia defaults (most conservative)
+      return { spreadPips: 1.5, liquidityProxy: 0.70 };
+  }
+}
+
+// =============================================================================
 // Utility Functions
 // =============================================================================
 

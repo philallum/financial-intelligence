@@ -19,9 +19,10 @@
 
 import { createClient, type SupabaseClient } from '@supabase/supabase-js';
 import { env } from './config/env.js';
-import { BATCH_TIMEOUT_MS } from './config/constants.js';
+import { BATCH_TIMEOUT_MS, TOPOLOGY_SIMILARITY_WEIGHT } from './config/constants.js';
 import { BatchOrchestrator } from './services/pipeline/batch-orchestrator.js';
 import type { StageHandlers } from './services/pipeline/batch-orchestrator.js';
+import { computeBlendedScore } from './engines/similarity-engine.js';
 import { createResearchArchiveWriter, createEvaluationEngine, createSimilarityArchiver } from './research/index.js';
 import type { ResearchForecastRecord, SimilarityArchiveRecord } from './research/index.js';
 import { traceEngineExecution } from './services/observability/trace-emitter.js';
@@ -29,6 +30,8 @@ import { computeTopology } from './engines/topology-engine.js';
 import { classifyRegimeV2 } from './engines/regime-engine-v2.js';
 import type { OHLC } from './types/index.js';
 import { getProcessableAssets } from './config/research-assets.js';
+import type { CalibrationParameters } from './engines/confidence-engine-v2.js';
+import { validateCalibrationParameters } from './engines/confidence-engine-v2.js';
 
 /**
  * Compute the current candle boundary timestamp.
@@ -54,7 +57,7 @@ function getCurrentCandleBoundary(): string {
  * Create stage handlers that delegate to the real engine and service implementations.
  * Each handler follows the contract defined in batch-orchestrator.ts.
  */
-function createStageHandlers(supabase: SupabaseClient): StageHandlers {
+function createStageHandlers(supabase: SupabaseClient, calibrationParams: CalibrationParameters): StageHandlers {
   const similarityArchiver = createSimilarityArchiver(supabase);
 
   return {
@@ -213,6 +216,32 @@ function createStageHandlers(supabase: SupabaseClient): StageHandlers {
         return { fingerprint_id: c.fingerprint_id, score, l1, l2, l3, l4, l5 };
       });
 
+      // Fetch topology vectors for blending
+      const allFingerprintIds = [fp.fingerprint_id, ...scored.map(s => s.fingerprint_id)];
+      const { data: topoRows } = await supabase
+        .from('fingerprint_topology')
+        .select('fingerprint_id, topology_vector')
+        .in('fingerprint_id', allFingerprintIds);
+
+      // Build lookup map: fingerprint_id -> topology_vector (as number[])
+      const topoMap = new Map<string, number[]>();
+      for (const row of (topoRows ?? [])) {
+        const vec = parseVector(row.topology_vector as string | number[] | null);
+        if (vec.length > 0) {
+          topoMap.set(row.fingerprint_id as string, vec);
+        }
+      }
+
+      // Compute topology cosine similarity and apply blending
+      const queryTopoVec = topoMap.get(fp.fingerprint_id);
+      for (const candidate of scored) {
+        const candidateTopoVec = topoMap.get(candidate.fingerprint_id);
+        const topologySimilarity = (queryTopoVec && candidateTopoVec)
+          ? cosineSimilarity(queryTopoVec, candidateTopoVec)
+          : undefined;
+        candidate.score = computeBlendedScore(candidate.score, topologySimilarity, TOPOLOGY_SIMILARITY_WEIGHT);
+      }
+
       // Sort by score descending, take top 50
       scored.sort((a, b) => b.score - a.score);
       const topMatches = scored.slice(0, input.top_n);
@@ -285,14 +314,20 @@ function createStageHandlers(supabase: SupabaseClient): StageHandlers {
       return computeForecastFromDistribution(input.outcome_distribution);
     },
     async confidence(input, fingerprintId) {
-      const { computeConfidenceFromInput } = await import('./engines/confidence-engine.js');
+      const { computeConfidenceV2FromInput } = await import('./engines/confidence-engine-v2.js');
       void fingerprintId;
       // Normalise variance to [0, 1] — raw std_dev in pips, cap at 50 pips as max
       const normalisedInput = {
         ...input,
         variance: Math.min(input.variance / 50, 1),
       };
-      return computeConfidenceFromInput(normalisedInput);
+      const v2Output = computeConfidenceV2FromInput(normalisedInput, calibrationParams);
+      return {
+        confidence_raw: v2Output.calibration_adjusted_base,
+        sample_weight: v2Output.sample_density_modifier,
+        regime_stability: v2Output.regime_accuracy_modifier,
+        confidence_final: v2Output.confidence_final,
+      };
     },
     async cache_write(data) {
       const { CacheWriter } = await import('./services/cache/cache-writer.js');
@@ -363,7 +398,30 @@ async function main(): Promise<void> {
   console.log(`[BatchEntry] Assets: ${processableAssets.map((a) => a.symbol).join(', ')}`);
 
   const supabase = createClient(env.SUPABASE_URL, env.SUPABASE_SERVICE_ROLE_KEY);
-  const handlers = createStageHandlers(supabase);
+
+  // Load calibration parameters from engine_versions table (required for confidence v2)
+  const { data: calibrationData, error: calibrationError } = await supabase
+    .from('engine_versions')
+    .select('config')
+    .eq('engine_name', 'confidence')
+    .eq('is_active', true)
+    .single();
+
+  if (calibrationError || !calibrationData) {
+    console.error('[BatchEntry] Failed to load calibration parameters from engine_versions table:', calibrationError?.message ?? 'No active confidence engine config found');
+    process.exit(1);
+  }
+
+  const calibrationParams = calibrationData.config as CalibrationParameters;
+
+  try {
+    validateCalibrationParameters(calibrationParams);
+  } catch (validationError) {
+    console.error('[BatchEntry] Invalid calibration parameters:', validationError instanceof Error ? validationError.message : validationError);
+    process.exit(1);
+  }
+
+  const handlers = createStageHandlers(supabase, calibrationParams);
 
   const orchestrator = new BatchOrchestrator({
     supabaseClient: supabase,

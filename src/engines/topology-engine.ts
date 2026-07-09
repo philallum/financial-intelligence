@@ -53,10 +53,10 @@ const CLUSTER_TOLERANCE_PIPS = 5;
 const INTERACTION_THRESHOLD_PIPS = 3;
 
 /**
- * Similarity Engine weight for topology layer (research-only, disabled).
- * Set to 0.0 until explicitly activated in a future release.
+ * @deprecated Moved to src/config/constants.ts with value 0.10.
+ * Import TOPOLOGY_SIMILARITY_WEIGHT from '../config/constants.js' instead.
  */
-export const TOPOLOGY_SIMILARITY_WEIGHT = 0.0;
+// export const TOPOLOGY_SIMILARITY_WEIGHT = 0.0;
 
 // =============================================================================
 // Public Interfaces

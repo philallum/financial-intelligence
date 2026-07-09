@@ -26,3 +26,6 @@ export const API_RESPONSE_TARGET_MS = 300 as const;
 
 /** Minimum TTL in seconds; skip caching if less time remains (Requirement 6.2) */
 export const CACHE_MIN_TTL_SECONDS = 60 as const;
+
+/** Topology layer weight for similarity scoring (Requirements 2.4, 2.5) */
+export const TOPOLOGY_SIMILARITY_WEIGHT = 0.10 as const;
