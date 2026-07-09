@@ -1,0 +1,107 @@
+# =============================================================================
+# Cloud Monitoring Alert Policies — Batch Pipeline Health
+# =============================================================================
+# Defines alert policies that fire when the batch pipeline fails or misses
+# a scheduled run. Deploy with setup-monitoring.sh.
+#
+# Alerts:
+# 1. Batch job failure — fires when fip-batch returns non-2xx or crashes
+# 2. Stale prediction — fires when no successful batch run in 4.5 hours
+# 3. Scheduler miss — fires when a Cloud Scheduler job fails to trigger
+# =============================================================================
+
+alertPolicies:
+
+  # ─── Alert 1: Batch Pipeline Failure ──────────────────────────────────────
+  - displayName: "FIP Batch Pipeline Failure"
+    documentation:
+      content: |
+        The batch pipeline (fip-batch) returned a non-success status or crashed.
+        
+        **Immediate actions:**
+        1. Check Cloud Run logs: `gcloud logging read 'resource.labels.service_name="fip-batch"' --limit=50 --freshness=1h`
+        2. Check if the service is deployed: `gcloud run services describe fip-batch --region=europe-west2`
+        3. Manually trigger a re-run: `gcloud scheduler jobs run fip-batch-trigger-HHMM --location=europe-west2`
+        
+        **Common causes:** Database timeout, Supabase connection failure, OOM, deployment regression.
+    conditions:
+      - displayName: "Batch service error rate > 0"
+        conditionThreshold:
+          filter: >
+            resource.type = "cloud_run_revision"
+            AND resource.labels.service_name = "fip-batch"
+            AND metric.type = "run.googleapis.com/request_count"
+            AND metric.labels.response_code_class != "2xx"
+          aggregations:
+            - alignmentPeriod: "300s"
+              perSeriesAligner: ALIGN_RATE
+          comparison: COMPARISON_GT
+          thresholdValue: 0
+          duration: "0s"
+          trigger:
+            count: 1
+    combiner: OR
+    notificationChannels: []  # Populated by setup-monitoring.sh
+
+  # ─── Alert 2: Stale Prediction (No Recent Batch Run) ─────────────────────
+  - displayName: "FIP Stale Prediction - No Batch Run in 4.5 Hours"
+    documentation:
+      content: |
+        No successful batch pipeline execution has been recorded in the past 4.5 hours.
+        The pipeline should run every 4 hours (at :02 past 00/04/08/12/16/20 UTC).
+        
+        **Immediate actions:**
+        1. Check scheduler job statuses: `gcloud scheduler jobs list --location=europe-west2`
+        2. Check for paused jobs: look for state != ENABLED
+        3. Check Cloud Run service health: `gcloud run services describe fip-batch --region=europe-west2`
+        4. Manually trigger: `gcloud scheduler jobs run fip-batch-trigger-HHMM --location=europe-west2`
+        
+        **Common causes:** Scheduler job paused, service account token expired, Cloud Run scaled-to-zero failure.
+    conditions:
+      - displayName: "No successful batch requests in 4.5h"
+        conditionAbsent:
+          filter: >
+            resource.type = "cloud_run_revision"
+            AND resource.labels.service_name = "fip-batch"
+            AND metric.type = "run.googleapis.com/request_count"
+            AND metric.labels.response_code_class = "2xx"
+          aggregations:
+            - alignmentPeriod: "300s"
+              perSeriesAligner: ALIGN_RATE
+          duration: "16200s"  # 4 hours 30 minutes
+          trigger:
+            count: 1
+    combiner: OR
+    notificationChannels: []  # Populated by setup-monitoring.sh
+
+  # ─── Alert 3: Cloud Scheduler Job Failure ─────────────────────────────────
+  - displayName: "FIP Scheduler Job Failed to Trigger"
+    documentation:
+      content: |
+        A Cloud Scheduler job (fip-batch-trigger-*) failed to dispatch its HTTP request.
+        This means the batch pipeline was never invoked for this cycle.
+        
+        **Immediate actions:**
+        1. Check the specific job: `gcloud scheduler jobs describe fip-batch-trigger-HHMM --location=europe-west2`
+        2. Verify service account permissions: the scheduler SA needs roles/run.invoker on fip-batch
+        3. Re-run manually: `gcloud scheduler jobs run fip-batch-trigger-HHMM --location=europe-west2`
+        
+        **Common causes:** Service account IAM binding removed, scheduler job paused, OIDC token issue.
+    conditions:
+      - displayName: "Scheduler dispatch failure"
+        conditionThreshold:
+          filter: >
+            resource.type = "cloud_scheduler_job"
+            AND resource.labels.job_id = monitoring.regex.full_match("fip-batch-trigger-.*")
+            AND metric.type = "logging.googleapis.com/log_entry_count"
+            AND metric.labels.severity = "ERROR"
+          aggregations:
+            - alignmentPeriod: "300s"
+              perSeriesAligner: ALIGN_SUM
+          comparison: COMPARISON_GT
+          thresholdValue: 0
+          duration: "0s"
+          trigger:
+            count: 1
+    combiner: OR
+    notificationChannels: []  # Populated by setup-monitoring.sh

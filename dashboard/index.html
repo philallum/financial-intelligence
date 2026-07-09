@@ -35,6 +35,10 @@
     .badge-success { background: #00c85320; color: #00c853; }
     .badge-error { background: #ff174420; color: #ff1744; }
     .valid-until { font-size: 0.75rem; color: #8b98a5; margin-top: 0.75rem; }
+    .stale-alert { background: #ff174420; border: 1px solid #ff1744; border-radius: 8px; padding: 0.6rem 1rem; margin-top: 0.75rem; display: flex; align-items: center; gap: 0.5rem; }
+    .stale-alert .icon { font-size: 1rem; }
+    .stale-alert .text { font-size: 0.75rem; color: #ff1744; font-weight: 500; }
+    .stale-alert .subtext { font-size: 0.7rem; color: #ff8a80; margin-top: 0.2rem; }
     .error { color: #ff1744; }
     #loading { color: #8b98a5; }
     .config { margin-bottom: 1.5rem; display: flex; align-items: center; gap: 0.75rem; flex-wrap: wrap; }
@@ -197,7 +201,32 @@
               <div class="value">${dominantText}</div>
             </div>
           </div>
-          <div class="valid-until">Prediction expires: ${new Date(data.forecast_valid_until).toLocaleString()} · Trading Cost: ${data.execution_metrics?.spread_penalty || '—'} · Market Hours: ${data.execution_metrics?.session_alignment || '—'}</div>
+          <div class="valid-until">Prediction expires: ${new Date(data.forecast_valid_until).toLocaleString()} &middot; Trading Cost: ${data.execution_metrics?.spread_penalty || '\u2014'} &middot; Market Hours: ${data.execution_metrics?.session_alignment || '\u2014'}</div>
+          ${renderStalenessAlert(data.forecast_valid_until)}
+        </div>
+      `;
+    }
+
+    function renderStalenessAlert(forecastValidUntil) {
+      if (!forecastValidUntil) return '';
+      const expiresAt = new Date(forecastValidUntil);
+      const now = new Date();
+      if (now <= expiresAt) return '';
+
+      const overdueMs = now.getTime() - expiresAt.getTime();
+      const overdueMin = Math.floor(overdueMs / 60000);
+      const overdueHrs = Math.floor(overdueMin / 60);
+      const overdueText = overdueHrs > 0
+        ? `${overdueHrs}h ${overdueMin % 60}m overdue`
+        : `${overdueMin}m overdue`;
+
+      return `
+        <div class="stale-alert">
+          <span class="icon">\u26A0\uFE0F</span>
+          <div>
+            <div class="text">Prediction is stale &mdash; batch pipeline may have missed a run (${overdueText})</div>
+            <div class="subtext">Expected refresh at ${expiresAt.toLocaleTimeString()}. Check Cloud Scheduler logs for fip-batch-trigger jobs.</div>
+          </div>
         </div>
       `;
     }

@@ -403,16 +403,16 @@ async function main(): Promise<void> {
   const { data: calibrationData, error: calibrationError } = await supabase
     .from('engine_versions')
     .select('config')
-    .eq('engine_name', 'confidence')
+    .eq('engine_name', 'confidence_v2')
     .eq('is_active', true)
     .single();
 
   if (calibrationError || !calibrationData) {
-    console.error('[BatchEntry] Failed to load calibration parameters from engine_versions table:', calibrationError?.message ?? 'No active confidence engine config found');
+    console.error('[BatchEntry] Failed to load calibration parameters from engine_versions table:', calibrationError?.message ?? 'No active confidence_v2 engine config found');
     process.exit(1);
   }
 
-  const calibrationParams = calibrationData.config as CalibrationParameters;
+  const calibrationParams = (calibrationData.config as any).calibration_parameters as CalibrationParameters;
 
   try {
     validateCalibrationParameters(calibrationParams);

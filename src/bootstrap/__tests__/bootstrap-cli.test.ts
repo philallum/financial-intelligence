@@ -7,7 +7,7 @@
  */
 
 import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
-import { parseArgs } from '../../../scripts/bootstrap-asset.js';
+import { parseArgs } from '../../bootstrap/cli-helpers.js';
 import { getAssetBySymbol, AssetStatus, AssetClass } from '../../config/research-assets.js';
 import type { ResearchAsset } from '../../config/research-assets.js';
 
