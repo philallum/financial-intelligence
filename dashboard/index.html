@@ -76,12 +76,26 @@
 
     /* Research archive history */
     .history-list { display: flex; flex-direction: column; gap: 0.5rem; }
+    .history-header { display: flex; justify-content: space-between; padding: 0 0.6rem 0.3rem; border-bottom: 1px solid #2f3336; margin-bottom: 0.3rem; }
+    .history-header span { font-size: 0.65rem; text-transform: uppercase; letter-spacing: 0.03em; color: #8b98a5; }
+    .hdr-pred { flex: 1; }
+    .hdr-out { width: 170px; text-align: right; }
     .history-item { display: flex; align-items: center; gap: 1rem; padding: 0.5rem 0.6rem; background: #0f1419; border-radius: 6px; font-size: 0.75rem; }
     .history-item .time { width: 130px; color: #8b98a5; }
     .history-item .dir { display: flex; gap: 0.4rem; }
     .history-item .dir span { padding: 0.1rem 0.4rem; border-radius: 3px; font-size: 0.7rem; font-weight: 600; }
     .history-item .move { width: 70px; text-align: right; }
     .history-item .conf { width: 50px; text-align: right; color: #8b98a5; }
+    .history-item-extended { display: flex; align-items: center; padding: 0.5rem 0.6rem; background: #0f1419; border-radius: 6px; font-size: 0.75rem; }
+    .history-item-extended .prediction-col { display: flex; align-items: center; gap: 0.75rem; flex: 1; }
+    .history-item-extended .prediction-col .time { width: 110px; color: #8b98a5; }
+    .history-item-extended .prediction-col .dir span { padding: 0.1rem 0.4rem; border-radius: 3px; font-size: 0.7rem; font-weight: 600; }
+    .history-item-extended .prediction-col .move { width: 65px; text-align: right; }
+    .history-item-extended .prediction-col .conf { width: 45px; text-align: right; color: #8b98a5; }
+    .history-item-extended .outcome-col { width: 170px; display: flex; align-items: center; gap: 0.5rem; justify-content: flex-end; }
+    .outcome-badge { padding: 0.15rem 0.4rem; border-radius: 3px; font-size: 0.7rem; font-weight: 600; }
+    .outcome-error { font-size: 0.65rem; color: #8b98a5; }
+    .outcome-pending { font-size: 0.65rem; color: #556270; font-style: italic; }
   </style>
 </head>
 <body>
@@ -120,11 +134,12 @@
       content.innerHTML = '<p id="loading" class="grid-full">Loading...</p>';
 
       try {
-        const [forecast, researchForecasts, similarity, traces] = await Promise.all([
+        const [forecast, researchForecasts, similarity, traces, recentCandles] = await Promise.all([
           fetchForecastData(),
-          supabaseQuery('research_forecasts', 'select=fingerprint_id,asset,confidence_final,sample_size,created_at,direction_probabilities,expected_move_pips,regime,engine_versions&order=created_at.desc&limit=10'),
+          supabaseQuery('research_forecasts', 'select=id,fingerprint_id,asset,confidence_final,sample_size,created_at,direction_probabilities,expected_move_pips,regime,engine_versions,forecast_expiry&order=created_at.desc&limit=10'),
           supabaseQuery('research_similarity_archive', 'select=match_fingerprint_id,similarity_score,rank,layer_breakdown,match_explanation&order=rank.asc&limit=10'),
           supabaseQuery('execution_traces', 'select=engine_name,engine_version,status,execution_time_ms,timestamp_utc&order=timestamp_utc.desc&limit=12'),
+          supabaseQuery('raw_candles', 'select=timestamp_utc,close&asset=eq.EURUSD&timeframe=eq.4H&order=timestamp_utc.desc&limit=20'),
         ]);
 
         let html = '';
@@ -141,8 +156,8 @@
         // 4. Top Similarity Matches
         html += renderSimilarityCard(similarity);
 
-        // 5. Research Archive History
-        html += renderHistoryCard(researchForecasts);
+        // 5. Research Archive History (with actual outcomes from candles)
+        html += renderHistoryCard(researchForecasts, recentCandles);
 
         content.innerHTML = html;
       } catch (err) {
@@ -359,8 +374,29 @@
       `;
     }
 
-    function renderHistoryCard(forecasts) {
+    function renderHistoryCard(forecasts, candles) {
       if (!forecasts || forecasts.length === 0) return '<div class="card"><h2>Prediction History</h2><p style="color:#8b98a5;font-size:0.8rem">No archived predictions yet</p></div>';
+
+      // Build candle lookup: timestamp → close price
+      const candleMap = new Map();
+      if (candles && Array.isArray(candles)) {
+        for (const c of candles) {
+          // Normalize to ISO string for matching
+          candleMap.set(new Date(c.timestamp_utc).toISOString(), c.close);
+        }
+      }
+
+      // Snap a date to the nearest 4H grid boundary (floor)
+      function snapToGrid(date) {
+        const d = new Date(date);
+        const hour = Math.floor(d.getUTCHours() / 4) * 4;
+        d.setUTCHours(hour, 0, 0, 0);
+        return d.toISOString();
+      }
+
+      const PIP_SIZE = 0.0001;
+      let correctCount = 0;
+      let evaluatedCount = 0;
 
       const items = forecasts.map(f => {
         const dp = f.direction_probabilities;
@@ -369,19 +405,73 @@
         const color = dominant === 'UP' ? '#00c853' : dominant === 'DOWN' ? '#ff1744' : '#ffab00';
         const time = new Date(f.created_at).toLocaleString(undefined, { month: 'short', day: 'numeric', hour: '2-digit', minute: '2-digit' });
 
+        let outcomeHtml = '';
+
+        // The forecast is made at a candle boundary, predicting the move over the next 4H.
+        // forecast_expiry = boundary + 4H = the timestamp of the "result" candle.
+        // Actual move = close at forecast_expiry - close at (forecast_expiry - 4H)
+        // Snap times to 4H grid since forecasts may be created slightly after the boundary.
+        const expiry = f.forecast_expiry ? new Date(f.forecast_expiry) : null;
+        const expirySnapped = expiry ? snapToGrid(expiry) : null;
+        const boundarySnapped = expiry ? snapToGrid(new Date(expiry.getTime() - 4 * 60 * 60 * 1000)) : null;
+
+        const closeAtBoundary = boundarySnapped ? candleMap.get(boundarySnapped) : undefined;
+        const closeAtExpiry = expirySnapped ? candleMap.get(expirySnapped) : undefined;
+
+        if (closeAtBoundary !== undefined && closeAtExpiry !== undefined) {
+          const actualPips = (closeAtExpiry - closeAtBoundary) / PIP_SIZE;
+          const actualDir = actualPips > 0.5 ? 'Up' : actualPips < -0.5 ? 'Down' : 'Flat';
+          const actualColor = actualPips > 0.5 ? '#00c853' : actualPips < -0.5 ? '#ff1744' : '#ffab00';
+          const predictedDir = dominant;
+          const actualDirNorm = actualPips > 0.5 ? 'UP' : actualPips < -0.5 ? 'DOWN' : 'FLAT';
+          const correct = predictedDir === actualDirNorm;
+
+          evaluatedCount++;
+          if (correct) correctCount++;
+
+          const resultIcon = correct ? '\u2705' : '\u274C';
+
+          outcomeHtml = `
+            <div class="outcome-col">
+              <span style="background:${actualColor}20;color:${actualColor};padding:0.1rem 0.4rem;border-radius:3px;font-size:0.7rem;font-weight:600">${actualDir}</span>
+              <span style="font-size:0.75rem;min-width:55px;text-align:right">${actualPips > 0 ? '+' : ''}${actualPips.toFixed(1)} pts</span>
+              <span style="font-size:0.75rem">${resultIcon}</span>
+            </div>
+          `;
+        } else {
+          const isExpired = expiry && expiry < new Date();
+          outcomeHtml = `
+            <div class="outcome-col">
+              <span class="outcome-pending">${isExpired ? 'Awaiting candle' : 'Pending'}</span>
+            </div>
+          `;
+        }
+
         return `
-          <div class="history-item">
-            <div class="time">${time}</div>
-            <div class="dir"><span style="background:${color}20;color:${color}">${dominantText} ${(Math.max(dp.up, dp.down, dp.flat) * 100).toFixed(0)}%</span></div>
-            <div class="move">${f.expected_move_pips > 0 ? '+' : ''}${f.expected_move_pips} pts</div>
-            <div class="conf">${(f.confidence_final * 100).toFixed(1)}%</div>
+          <div class="history-item-extended">
+            <div class="prediction-col">
+              <div class="time">${time}</div>
+              <div class="dir"><span style="background:${color}20;color:${color}">${dominantText} ${(Math.max(dp.up, dp.down, dp.flat) * 100).toFixed(0)}%</span></div>
+              <div class="move">${f.expected_move_pips > 0 ? '+' : ''}${f.expected_move_pips} pts</div>
+              <div class="conf">${(f.confidence_final * 100).toFixed(1)}%</div>
+            </div>
+            ${outcomeHtml}
           </div>
         `;
       }).join('');
 
+      const accuracy = evaluatedCount > 0 ? ((correctCount / evaluatedCount) * 100).toFixed(0) : '--';
+      const statsHtml = evaluatedCount > 0
+        ? `<span style="font-size:0.7rem;color:#8b98a5;text-transform:none;letter-spacing:0;font-weight:400">(${forecasts.length} recent &middot; ${accuracy}% direction accuracy on ${evaluatedCount} evaluated)</span>`
+        : `<span style="font-size:0.7rem;color:#8b98a5;text-transform:none;letter-spacing:0;font-weight:400">(${forecasts.length} recent)</span>`;
+
       return `
         <div class="card">
-          <h2>Prediction History <span style="font-size:0.7rem;color:#8b98a5;text-transform:none;letter-spacing:0;font-weight:400">(${forecasts.length} recent)</span></h2>
+          <h2>Prediction History ${statsHtml}</h2>
+          <div class="history-header">
+            <span class="hdr-pred">Prediction</span>
+            <span class="hdr-out">Actual Outcome</span>
+          </div>
           <div class="history-list">${items}</div>
         </div>
       `;

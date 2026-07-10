@@ -467,6 +467,96 @@ async function main(): Promise<void> {
     process.exit(1);
   }
 
+  // === Post-Pipeline Stage: Outcome Backfill ===
+  // Compute and store forward outcomes for previous fingerprints that don't have one yet.
+  // This fills the gap so the evaluation engine can assess forecast accuracy.
+  // Failures do NOT halt the batch.
+  try {
+    console.log('[BatchEntry] Starting outcome backfill stage');
+
+    for (const asset of processableAssets) {
+      // Find the 2 most recent candles for this asset (previous + current)
+      const { data: recentCandles, error: candleErr } = await supabase
+        .from('raw_candles')
+        .select('timestamp_utc, open, high, low, close')
+        .eq('asset', asset.symbol)
+        .eq('timeframe', '4H')
+        .order('timestamp_utc', { ascending: false })
+        .limit(2);
+
+      if (candleErr || !recentCandles || recentCandles.length < 2) {
+        console.warn(`[BatchEntry] Outcome backfill: insufficient candles for ${asset.symbol}`);
+        continue;
+      }
+
+      // recentCandles[0] = current candle (just ingested), recentCandles[1] = previous candle
+      const currentCandle = recentCandles[0];
+      const previousCandle = recentCandles[1];
+
+      // Find the fingerprint for the previous candle
+      const { data: prevFp, error: fpErr } = await supabase
+        .from('market_fingerprints')
+        .select('fingerprint_id')
+        .eq('asset', asset.symbol)
+        .eq('timeframe', '4H')
+        .eq('timestamp_utc', previousCandle.timestamp_utc)
+        .single();
+
+      if (fpErr || !prevFp) {
+        console.warn(`[BatchEntry] Outcome backfill: no fingerprint for ${asset.symbol} at ${previousCandle.timestamp_utc}`);
+        continue;
+      }
+
+      // Check if outcome already exists (idempotent)
+      const { data: existingOutcome } = await supabase
+        .from('market_outcomes')
+        .select('outcome_id')
+        .eq('fingerprint_id', prevFp.fingerprint_id)
+        .eq('horizon', '4H')
+        .single();
+
+      if (existingOutcome) {
+        console.log(`[BatchEntry] Outcome backfill: ${asset.symbol} already has outcome for ${previousCandle.timestamp_utc}`);
+        continue;
+      }
+
+      // Compute forward outcome: how the market moved from previous close to current close
+      const pipSize = asset.pipSize;
+      const prevClose = Number(previousCandle.close);
+      const currClose = Number(currentCandle.close);
+      const currHigh = Number(currentCandle.high);
+      const currLow = Number(currentCandle.low);
+
+      const netReturnPips = (currClose - prevClose) / pipSize;
+      const maxFavourableExcursion = (currHigh - prevClose) / pipSize;
+      const maxAdverseExcursion = (prevClose - currLow) / pipSize;
+      const realisedVolatility = ((currHigh - currLow) / pipSize) / 10000;
+
+      const { error: insertErr } = await supabase
+        .from('market_outcomes')
+        .upsert({
+          fingerprint_id: prevFp.fingerprint_id,
+          asset: asset.symbol,
+          horizon: '4H',
+          net_return_pips: Math.round(netReturnPips * 100) / 100,
+          max_favourable_excursion: Math.round(maxFavourableExcursion * 100) / 100,
+          max_adverse_excursion: Math.round(maxAdverseExcursion * 100) / 100,
+          realised_volatility: Math.round(realisedVolatility * 10000) / 10000,
+          timestamp_utc: currentCandle.timestamp_utc,
+          batch_id: candleBoundary,
+          engine_version: '1.0.0',
+        }, { onConflict: 'fingerprint_id,horizon', ignoreDuplicates: true });
+
+      if (insertErr) {
+        console.warn(`[BatchEntry] Outcome backfill: insert failed for ${asset.symbol}: ${insertErr.message}`);
+      } else {
+        console.log(`[BatchEntry] Outcome backfill: stored outcome for ${asset.symbol} at ${previousCandle.timestamp_utc} → net_return=${netReturnPips.toFixed(2)} pips`);
+      }
+    }
+  } catch (backfillError) {
+    console.error('[BatchEntry] Outcome backfill stage failed (non-fatal):', backfillError);
+  }
+
   // === Post-Pipeline Stage: Evaluation ===
   // Evaluate PREVIOUSLY matured forecasts (forecast_expiry < NOW()).
   // Runs in Batch_Layer only. Failures do NOT halt the batch.
