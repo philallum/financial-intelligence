@@ -347,6 +347,14 @@ function createStageHandlers(supabase: SupabaseClient, calibrationParams: Calibr
         true, // batch completed — this is the final stage
       );
     },
+    async sentiment(input) {
+      const { computeSentiment } = await import('./engines/sentiment-engine.js');
+      return computeSentiment(input);
+    },
+    async macro_context(input) {
+      const { computeMacroContext } = await import('./engines/macro-context-engine.js');
+      return computeMacroContext(input);
+    },
     async research_persist(data) {
       const archiveWriter = createResearchArchiveWriter(supabase);
 
