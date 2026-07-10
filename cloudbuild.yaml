@@ -70,7 +70,21 @@ steps:
     waitFor: ['run-tests', 'build-ts']
     id: 'build-api'
 
-  # --- Step 3: Push batch image ---
+  # --- Step 3: Build integrity job image ---
+  - name: 'gcr.io/cloud-builders/docker'
+    args:
+      - 'build'
+      - '-f'
+      - 'Dockerfile.integrity'
+      - '-t'
+      - '${_REGISTRY}/$PROJECT_ID/${_REPOSITORY}/integrity:${_TAG}'
+      - '-t'
+      - '${_REGISTRY}/$PROJECT_ID/${_REPOSITORY}/integrity:latest'
+      - '.'
+    waitFor: ['run-tests', 'build-ts']
+    id: 'build-integrity'
+
+  # --- Step 4: Push batch image ---
   - name: 'gcr.io/cloud-builders/docker'
     args: ['push', '${_REGISTRY}/$PROJECT_ID/${_REPOSITORY}/batch:${_TAG}']
     waitFor: ['build-batch']
@@ -81,7 +95,7 @@ steps:
     waitFor: ['build-batch']
     id: 'push-batch-latest'
 
-  # --- Step 4: Push API image ---
+  # --- Step 5: Push API image ---
   - name: 'gcr.io/cloud-builders/docker'
     args: ['push', '${_REGISTRY}/$PROJECT_ID/${_REPOSITORY}/api:${_TAG}']
     waitFor: ['build-api']
@@ -92,7 +106,18 @@ steps:
     waitFor: ['build-api']
     id: 'push-api-latest'
 
-  # --- Step 5: Deploy batch Cloud Run Job ---
+  # --- Step 6: Push integrity image ---
+  - name: 'gcr.io/cloud-builders/docker'
+    args: ['push', '${_REGISTRY}/$PROJECT_ID/${_REPOSITORY}/integrity:${_TAG}']
+    waitFor: ['build-integrity']
+    id: 'push-integrity'
+
+  - name: 'gcr.io/cloud-builders/docker'
+    args: ['push', '${_REGISTRY}/$PROJECT_ID/${_REPOSITORY}/integrity:latest']
+    waitFor: ['build-integrity']
+    id: 'push-integrity-latest'
+
+  # --- Step 7: Deploy batch Cloud Run Job ---
   - name: 'gcr.io/google.com/cloudsdktool/cloud-sdk'
     entrypoint: 'gcloud'
     args:
@@ -111,7 +136,7 @@ steps:
     waitFor: ['push-batch', 'push-batch-latest']
     id: 'deploy-batch'
 
-  # --- Step 6: Deploy API Cloud Run Service ---
+  # --- Step 8: Deploy API Cloud Run Service ---
   # Deploys with max 2 instances (cost ceiling) and mounts RAPIDAPI_PROXY_SECRET
   # from Secret Manager for RapidAPI marketplace proxy validation.
   - name: 'gcr.io/google.com/cloudsdktool/cloud-sdk'
@@ -128,6 +153,26 @@ steps:
     waitFor: ['push-api', 'push-api-latest']
     id: 'deploy-api'
 
+  # --- Step 9: Deploy integrity Cloud Run Job ---
+  - name: 'gcr.io/google.com/cloudsdktool/cloud-sdk'
+    entrypoint: 'gcloud'
+    args:
+      - 'run'
+      - 'jobs'
+      - 'deploy'
+      - 'fip-integrity'
+      - '--image=${_REGISTRY}/$PROJECT_ID/${_REPOSITORY}/integrity:${_TAG}'
+      - '--region=${_REGION}'
+      - '--memory=512Mi'
+      - '--cpu=1'
+      - '--task-timeout=1800s'
+      - '--max-retries=0'
+      - '--parallelism=1'
+      - '--tasks=1'
+      - '--update-secrets=SUPABASE_URL=SUPABASE_URL:latest,SUPABASE_SERVICE_ROLE_KEY=SUPABASE_SERVICE_ROLE_KEY:latest,TWELVE_DATA_API_KEY=TWELVE_DATA_API_KEY:latest,MASSIVE_API_KEY=MASSIVE_API_KEY:latest,ALPHA_VANTAGE_API_KEY=ALPHA_VANTAGE_API_KEY:latest,FINNHUB_API_KEY=FINNHUB_API_KEY:latest,NEWS_API_KEY=NEWS_API_KEY:latest'
+    waitFor: ['push-integrity', 'push-integrity-latest']
+    id: 'deploy-integrity'
+
 
 
 images:
@@ -135,6 +180,8 @@ images:
   - '${_REGISTRY}/$PROJECT_ID/${_REPOSITORY}/batch:latest'
   - '${_REGISTRY}/$PROJECT_ID/${_REPOSITORY}/api:${_TAG}'
   - '${_REGISTRY}/$PROJECT_ID/${_REPOSITORY}/api:latest'
+  - '${_REGISTRY}/$PROJECT_ID/${_REPOSITORY}/integrity:${_TAG}'
+  - '${_REGISTRY}/$PROJECT_ID/${_REPOSITORY}/integrity:latest'
 
 options:
   logging: CLOUD_LOGGING_ONLY

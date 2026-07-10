@@ -1,0 +1,29 @@
+# =============================================================================
+# Cloud Scheduler Configuration — Daily Data Integrity Trigger
+# =============================================================================
+# Defines the cron job that triggers the integrity pipeline at 01:00 UTC daily.
+# Runs after forex market close (Friday 21:00 UTC) and avoids contention with
+# the 4H batch pipeline (runs at XX:02 UTC).
+#
+# Target: Cloud Run Job (fip-integrity) via authenticated HTTP POST
+#
+# Requirements: 1.1
+# =============================================================================
+
+schedulerJobs:
+  - name: fip-integrity-trigger
+    description: "Trigger daily data integrity job at 01:00 UTC"
+    schedule: "0 1 * * *"
+    timeZone: "UTC"
+    httpTarget:
+      uri: "https://europe-west1-run.googleapis.com/apis/run.googleapis.com/v1/namespaces/financial-intelligence-501107/jobs/fip-integrity:run"
+      httpMethod: POST
+      headers:
+        Content-Type: "application/json"
+      body: '{"trigger":"scheduled","run_type":"daily_integrity"}'
+      oidcToken:
+        serviceAccountEmail: "batch-scheduler@financial-intelligence-501107.iam.gserviceaccount.com"
+    retryConfig:
+      retryCount: 1
+      maxRetryDuration: "60s"
+    attemptDeadline: "1800s"

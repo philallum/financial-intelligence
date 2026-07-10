@@ -1,0 +1,48 @@
+# =============================================================================
+# Dockerfile.integrity — Daily Data Integrity Job
+# =============================================================================
+# Multi-stage build for the daily integrity job.
+# Triggered by Cloud Scheduler at 01:00 UTC daily.
+# Runs gap detection, backfill, news/calendar ingestion, and derivation then exits.
+#
+# Requirements: 1.1
+# =============================================================================
+
+# --- Stage 1: Build ---
+FROM node:22-slim AS builder
+
+WORKDIR /app
+
+# Copy package files and install all dependencies (including devDependencies for tsc)
+COPY package.json package-lock.json ./
+RUN npm ci
+
+# Copy source code and TypeScript config
+COPY tsconfig.json ./
+COPY src/ ./src/
+
+# Compile TypeScript to JavaScript (integrity job doesn't need OpenAPI spec)
+RUN npx tsc
+
+# --- Stage 2: Production ---
+FROM node:22-slim AS production
+
+WORKDIR /app
+
+# Set production environment
+ENV NODE_ENV=production
+
+# Copy package files and install production dependencies only
+COPY package.json package-lock.json ./
+RUN npm ci --omit=dev && npm cache clean --force
+
+# Copy compiled JavaScript from build stage
+COPY --from=builder /app/dist ./dist
+
+# Run as non-root user for security
+RUN groupadd -g 1001 appgroup && \
+    useradd -u 1001 -g appgroup -s /bin/false appuser
+USER appuser
+
+# Integrity job entry point — runs pipeline then exits
+CMD ["node", "dist/integrity-entry.js"]

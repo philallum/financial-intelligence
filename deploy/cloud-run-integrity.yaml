@@ -1,0 +1,83 @@
+# =============================================================================
+# Cloud Run Job Definition — Daily Data Integrity
+# =============================================================================
+# Declarative Cloud Run Job configuration for the daily integrity pipeline.
+# Deploy with: gcloud run jobs replace deploy/cloud-run-integrity.yaml --region=europe-west1
+#
+# Key constraints:
+# - 30-minute timeout (1800s) matching INTEGRITY_TIMEOUT_MS
+# - 512MB memory for processing candle backfill and derivation
+# - 1 CPU for sequential stage execution
+# - maxRetries: 0 (idempotent job; manual re-trigger preferred over auto-retry)
+# - No public access (triggered by Cloud Scheduler via authenticated HTTP)
+#
+# Requirements: 1.1, 1.4
+# =============================================================================
+
+apiVersion: run.googleapis.com/v1
+kind: Job
+metadata:
+  name: fip-integrity
+  labels:
+    app: financial-intelligence-platform
+    component: integrity-job
+  annotations:
+    run.googleapis.com/description: "Daily data integrity - gap detection, backfill, news/calendar ingestion, derivation"
+spec:
+  template:
+    metadata:
+      annotations:
+        # Disable CPU throttling so the job gets full CPU during execution
+        run.googleapis.com/cpu-throttling: "false"
+    spec:
+      taskCount: 1
+      template:
+        spec:
+          # No automatic retries — job is idempotent, manual re-trigger preferred
+          maxRetries: 0
+          # 30-minute timeout matching INTEGRITY_TIMEOUT_MS = 1_800_000
+          timeoutSeconds: 1800
+          containers:
+            - image: europe-west1-docker.pkg.dev/PROJECT_ID/financial-intelligence/integrity:latest
+              resources:
+                limits:
+                  memory: "512Mi"
+                  cpu: "1000m"
+              env:
+                - name: NODE_ENV
+                  value: "production"
+                - name: SUPABASE_URL
+                  valueFrom:
+                    secretKeyRef:
+                      name: SUPABASE_URL
+                      key: latest
+                - name: SUPABASE_SERVICE_ROLE_KEY
+                  valueFrom:
+                    secretKeyRef:
+                      name: SUPABASE_SERVICE_ROLE_KEY
+                      key: latest
+                - name: TWELVE_DATA_API_KEY
+                  valueFrom:
+                    secretKeyRef:
+                      name: TWELVE_DATA_API_KEY
+                      key: latest
+                - name: MASSIVE_API_KEY
+                  valueFrom:
+                    secretKeyRef:
+                      name: MASSIVE_API_KEY
+                      key: latest
+                - name: ALPHA_VANTAGE_API_KEY
+                  valueFrom:
+                    secretKeyRef:
+                      name: ALPHA_VANTAGE_API_KEY
+                      key: latest
+                - name: FINNHUB_API_KEY
+                  valueFrom:
+                    secretKeyRef:
+                      name: FINNHUB_API_KEY
+                      key: latest
+                - name: NEWS_API_KEY
+                  valueFrom:
+                    secretKeyRef:
+                      name: NEWS_API_KEY
+                      key: latest
