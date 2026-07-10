@@ -8,6 +8,11 @@
 export * from "./enums.js";
 export * from "./config.js";
 export * from "./entities.js";
+export * from "./sentiment.js";
+export * from "./macro.js";
+
+import type { SentimentVector } from "./sentiment.js";
+import type { MacroVector } from "./macro.js";
 
 import type {
   VolatilityRegime,
@@ -186,6 +191,10 @@ export interface FingerprintInput {
   timestamp_utc: string; // ISO-8601 UTC
   ohlc: OHLC;
   market_context?: MacroContext;
+  /** Real sentiment vector from Sentiment Engine (replaces placeholder for L5 layer). */
+  sentiment_vector?: SentimentVector;
+  /** Real macro vector from Macro Context Engine (L4 layer). */
+  macro_vector?: MacroVector;
 }
 
 /** A deterministic market state fingerprint. */

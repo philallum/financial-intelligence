@@ -16,6 +16,7 @@ import { Router } from 'express';
 import type { Request, Response } from 'express';
 import type { SupabaseClient } from '@supabase/supabase-js';
 import { computeTradeabilityFromInput, getSessionDefaults } from '../../engines/tradeability-engine.js';
+import { evaluateNewsRisk } from '../../engines/news-risk-evaluator.js';
 import { successResponse, errorResponse } from '../utils/response-envelope.js';
 import type { Forecast } from '../../types/index.js';
 import { Session } from '../../types/enums.js';
@@ -85,6 +86,18 @@ function getRetryAfterSeconds(ip: string): number {
   return Math.max(1, Math.ceil((ANON_RATE_WINDOW_MS - elapsed) / 1000));
 }
 
+/**
+ * Extracts currency codes from an asset symbol.
+ * For forex pairs (6 chars, e.g. "EURUSD"): splits into ["EUR", "USD"].
+ * For other assets: returns empty array (conservative — won't trigger any events).
+ */
+function extractCurrencies(symbol: string): string[] {
+  if (symbol.length === 6 && /^[A-Z]{6}$/.test(symbol)) {
+    return [symbol.slice(0, 3), symbol.slice(3, 6)];
+  }
+  return [];
+}
+
 export function createForecastRouter(options: ForecastRouteOptions): Router {
   const { supabase } = options;
   const router = Router();
@@ -151,12 +164,24 @@ export function createForecastRouter(options: ForecastRouteOptions): Router {
     // Inject runtime conditions and execute Tradeability Engine
     const session = getCurrentSession();
     const defaults = getSessionDefaults(session, 'EURUSD');
+
+    // Evaluate news risk at request time (Req 9.4, 9.5)
+    const assetCurrencies = extractCurrencies(upperAsset);
+    const newsRiskResult = await evaluateNewsRisk(
+      {
+        evaluation_time: new Date().toISOString(),
+        asset_currencies: assetCurrencies,
+        lookahead_hours: 8,
+      },
+      supabase,
+    );
+
     const tradeabilityResult = computeTradeabilityFromInput({
       forecast,
       spread_pips: defaults.spreadPips,
       session_state: session,
       live_liquidity_proxy: defaults.liquidityProxy,
-      news_risk_flag: false,
+      news_risk_flag: newsRiskResult.news_risk_flag,
     });
 
     // Req 13.1, 13.2: Anonymous access returns restricted subset

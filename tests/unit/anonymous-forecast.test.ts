@@ -33,16 +33,37 @@ const mockForecastPayload = {
 // =============================================================================
 
 function createMockSupabase(forecastData: unknown = mockForecastPayload, error: unknown = null) {
-  return {
-    from: vi.fn().mockReturnValue({
-      select: vi.fn().mockReturnValue({
-        eq: vi.fn().mockReturnValue({
-          single: vi.fn().mockResolvedValue({
-            data: error ? null : { payload: forecastData, valid_until: '2025-01-01T12:00:00Z' },
-            error,
+  // News risk evaluator chain: from → select → eq → in → gt → lte → order
+  const newsRiskChain = {
+    select: vi.fn().mockReturnValue({
+      eq: vi.fn().mockReturnValue({
+        in: vi.fn().mockReturnValue({
+          gt: vi.fn().mockReturnValue({
+            lte: vi.fn().mockReturnValue({
+              order: vi.fn().mockResolvedValue({ data: [], error: null }),
+            }),
           }),
         }),
       }),
+    }),
+  };
+
+  // Cached forecast chain: from → select → eq → single
+  const forecastChain = {
+    select: vi.fn().mockReturnValue({
+      eq: vi.fn().mockReturnValue({
+        single: vi.fn().mockResolvedValue({
+          data: error ? null : { payload: forecastData, valid_until: '2025-01-01T12:00:00Z' },
+          error,
+        }),
+      }),
+    }),
+  };
+
+  return {
+    from: vi.fn().mockImplementation((table: string) => {
+      if (table === 'economic_events') return newsRiskChain;
+      return forecastChain;
     }),
   } as unknown as SupabaseClient;
 }

@@ -22,6 +22,12 @@ import { BatchStatus } from '../../types/enums.js';
 import { traceEngineExecution } from '../observability/trace-emitter.js';
 import type { EngineParticipationMap } from '../../config/research-assets.js';
 import type {
+  MacroContextEngineInput,
+  MacroContextEngineOutput,
+  MacroVector,
+  EconomicEvent,
+} from '../../types/macro.js';
+import type {
   BatchRun,
   IngestionInput,
   IngestionOutput,
@@ -35,6 +41,10 @@ import type {
   Forecast,
   ConfidenceInput,
   ConfidenceOutput,
+  SentimentEngineInput,
+  SentimentEngineOutput,
+  SentimentVector,
+  NewsArticle,
 } from '../../types/index.js';
 
 // =============================================================================
@@ -89,6 +99,10 @@ export interface StageHandlers {
   regime_v2?: (fingerprint: Fingerprint) => Promise<void>;
   /** Optional post-pipeline handler for research persistence. Failures are logged, never propagated. */
   research_persist?: (data: ResearchPersistInput) => Promise<void>;
+  /** Sentiment engine handler. Runs between ingestion and fingerprint. Failure never halts pipeline. */
+  sentiment?: (input: SentimentEngineInput) => Promise<SentimentEngineOutput>;
+  /** Macro context engine handler. Runs in parallel with sentiment before fingerprint. Failure never halts pipeline. */
+  macro_context?: (input: MacroContextEngineInput) => Promise<MacroContextEngineOutput>;
 }
 
 /** Input to the research persistence post-pipeline handler. */
@@ -349,6 +363,111 @@ export class BatchOrchestrator {
       return this.buildFailureResult(batchId, 'ingestion', error, completedStages, startTime);
     }
 
+    // Stage 1.5: Sentiment & Macro engines (parallel, non-blocking)
+    // Both engines run concurrently via Promise.all — they have no data dependency on each other.
+    // Each engine handles its own errors internally (catches and logs, returns undefined on failure).
+    // Failure of one engine does NOT affect the other or the pipeline.
+    // Engines are skipped when disabled via Engine_Participation_Map (Req 10.5).
+
+    const sentimentPromise = (async (): Promise<SentimentVector | undefined> => {
+      if (!engines.sentiment || !this.handlers.sentiment) return undefined;
+      try {
+        // Fetch articles from news_articles table (24-hour window ending at candle boundary)
+        const { data: articlesData, error: articlesError } = await this.supabase
+          .from('news_articles')
+          .select('id, asset_id, headline, summary, published_at, sentiment_hint, relevance_score, source')
+          .eq('asset_id', input.asset)
+          .gte('published_at', new Date(new Date(input.candle_boundary).getTime() - 24 * 3600000).toISOString())
+          .lte('published_at', input.candle_boundary)
+          .order('published_at', { ascending: false });
+
+        if (articlesError) {
+          console.warn(
+            `[BatchOrchestrator] Failed to fetch news articles for sentiment (non-blocking): ${articlesError.message}`,
+          );
+          return undefined;
+        }
+
+        const articles: NewsArticle[] = (articlesData ?? []) as unknown as NewsArticle[];
+        const sentimentInput: SentimentEngineInput = {
+          articles,
+          window_end: input.candle_boundary,
+          window_hours: 24,
+          previous_aggregate_sentiment: null,
+        };
+
+        const sentimentOutput = await traceEngineExecution(
+          (inp: SentimentEngineInput) => this.handlers.sentiment!(inp),
+          sentimentInput,
+          { engine_name: 'sentiment', engine_version: versionOf('sentiment'), batch_id: batchId },
+          this.supabase,
+        );
+        return sentimentOutput.vector;
+      } catch (error) {
+        console.warn(
+          `[BatchOrchestrator] Sentiment engine failed (non-blocking): ${error instanceof Error ? error.message : String(error)}`,
+        );
+        return undefined;
+      }
+    })();
+
+    const macroPromise = (async (): Promise<MacroVector | undefined> => {
+      if (!engines.macro || !this.handlers.macro_context) return undefined;
+      try {
+        // Derive currencies from asset symbol (e.g., "eurusd" → ["EUR", "USD"])
+        const assetUpper = input.asset.toUpperCase();
+        const currencies: string[] = [];
+        if (assetUpper.length >= 6) {
+          currencies.push(assetUpper.slice(0, 3), assetUpper.slice(3, 6));
+        } else {
+          currencies.push(assetUpper);
+        }
+
+        // Fetch economic events (72h lookback, 24h lookahead from candle boundary)
+        const candleBoundaryTime = new Date(input.candle_boundary).getTime();
+        const lookbackStart = new Date(candleBoundaryTime - 72 * 3600000).toISOString();
+        const lookaheadEnd = new Date(candleBoundaryTime + 24 * 3600000).toISOString();
+
+        const { data: eventsData, error: eventsError } = await this.supabase
+          .from('economic_events')
+          .select('id, name, event_date, impact, actual, estimate, previous, currency')
+          .in('currency', currencies)
+          .gte('event_date', lookbackStart)
+          .lte('event_date', lookaheadEnd)
+          .order('event_date', { ascending: false });
+
+        if (eventsError) {
+          console.warn(
+            `[BatchOrchestrator] Failed to fetch economic events for macro context (non-blocking): ${eventsError.message}`,
+          );
+          return undefined;
+        }
+
+        const events: EconomicEvent[] = (eventsData ?? []) as unknown as EconomicEvent[];
+        const macroInput: MacroContextEngineInput = {
+          events,
+          reference_time: input.candle_boundary,
+          lookback_hours: 72,
+          lookahead_hours: 24,
+        };
+
+        const macroOutput = await traceEngineExecution(
+          (inp: MacroContextEngineInput) => this.handlers.macro_context!(inp),
+          macroInput,
+          { engine_name: 'macro_context', engine_version: versionOf('macro_context'), batch_id: batchId },
+          this.supabase,
+        );
+        return macroOutput.vector;
+      } catch (error) {
+        console.warn(
+          `[BatchOrchestrator] Macro context engine failed (non-blocking): ${error instanceof Error ? error.message : String(error)}`,
+        );
+        return undefined;
+      }
+    })();
+
+    const [sentimentVector, macroVector] = await Promise.all([sentimentPromise, macroPromise]);
+
     // Stage 2: Fingerprint (always runs — it's the foundation)
     let fingerprint: Fingerprint;
     try {
@@ -356,6 +475,8 @@ export class BatchOrchestrator {
         asset: ingestionOutput.asset,
         timestamp_utc: ingestionOutput.timestamp_utc,
         ohlc: ingestionOutput.ohlc,
+        ...(sentimentVector && { sentiment_vector: sentimentVector }),
+        ...(macroVector && { macro_vector: macroVector }),
       };
       fingerprint = await traceEngineExecution(
         (inp: FingerprintInput) => this.handlers.fingerprint(inp),

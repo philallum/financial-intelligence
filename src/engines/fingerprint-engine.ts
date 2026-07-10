@@ -24,6 +24,8 @@ import type {
   ExtendedMarketFeatures,
   ExtendedFeaturesConfig,
   ExtendedFeaturesInput,
+  SentimentVector,
+  MacroVector,
 } from "../types/index.js";
 import type { VolatilityRegime, TrendRegime, Session } from "../types/enums.js";
 
@@ -62,7 +64,7 @@ const L5_SENTIMENT_PRESSURE_DIM = 6;
  * This is a pure function — no side effects, no database access.
  */
 export function generateFingerprint(input: FingerprintInput): Fingerprint {
-  const { asset, timestamp_utc, ohlc, market_context } = input;
+  const { asset, timestamp_utc, ohlc, market_context, sentiment_vector, macro_vector } = input;
 
   // 1. Generate deterministic fingerprint_id
   const fingerprint_id = computeFingerprintId(asset, timestamp_utc);
@@ -74,7 +76,7 @@ export function generateFingerprint(input: FingerprintInput): Fingerprint {
   const regime = classifyRegime(return_profile, timestamp_utc);
 
   // 4. Compute 5 state layers independently (no cross-layer leakage)
-  const state_layers = computeStateLayers(ohlc, return_profile, market_context);
+  const state_layers = computeStateLayers(ohlc, return_profile, market_context, sentiment_vector, macro_vector);
 
   // 5. Assemble immutable fingerprint
   const fingerprint: Fingerprint = {
@@ -231,14 +233,58 @@ export function computeStateLayers(
   ohlc: OHLC,
   return_profile: { net_return_pips: number; range_pips: number },
   market_context?: MacroContext,
+  sentiment_vector?: SentimentVector,
+  macro_vector?: MacroVector,
 ): Fingerprint["state_layers"] {
   return {
     market_structure: computeL1MarketStructure(ohlc, return_profile),
     volatility_profile: computeL2VolatilityProfile(ohlc, return_profile),
     liquidity_field: computeL3LiquidityField(ohlc),
-    macro_context: computeL4MacroContext(market_context),
-    sentiment_pressure: computeL5SentimentPressure(market_context),
+    macro_context: macro_vector
+      ? macroVectorToArray(macro_vector)
+      : computeL4MacroContext(market_context),
+    sentiment_pressure: sentiment_vector
+      ? sentimentVectorToArray(sentiment_vector)
+      : computeL5SentimentPressure(market_context),
   };
+}
+
+// =============================================================================
+// Vector Conversion Helpers
+// =============================================================================
+
+/**
+ * Convert a typed MacroVector into its 8-dimensional number[] representation.
+ * Used when a real MacroVector is provided (from Macro Context Engine) instead
+ * of falling back to MacroContext-proxy computation.
+ */
+function macroVectorToArray(vector: MacroVector): number[] {
+  return [
+    vector.event_proximity_pressure,
+    vector.aggregate_surprise_factor,
+    vector.rate_differential,
+    vector.high_impact_event_count,
+    vector.medium_impact_event_count,
+    vector.event_density,
+    vector.upcoming_event_intensity,
+    vector.composite_macro_state,
+  ];
+}
+
+/**
+ * Convert a typed SentimentVector into its 6-dimensional number[] representation.
+ * Used when a real SentimentVector is provided (from Sentiment Engine) instead
+ * of falling back to MacroContext-proxy computation.
+ */
+function sentimentVectorToArray(vector: SentimentVector): number[] {
+  return [
+    vector.aggregate_sentiment,
+    vector.bullish_pressure,
+    vector.bearish_pressure,
+    vector.article_volume,
+    vector.sentiment_dispersion,
+    vector.momentum,
+  ];
 }
 
 /**
