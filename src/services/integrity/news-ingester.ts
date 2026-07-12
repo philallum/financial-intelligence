@@ -12,6 +12,7 @@ import type { SupabaseClient } from "@supabase/supabase-js";
 import type { RateLimitRegistry } from "../ingestion/rate-limiter.js";
 import type { NewsIngestionConfig, NewsArticle, NewsIngestionResult } from "./types.js";
 import { SENTIMENT_MAP } from "./types.js";
+import { scoreArticleSentiment } from "./sentiment-scorer.js";
 
 // ─── Currency Detection ──────────────────────────────────────────────────────
 
@@ -60,21 +61,48 @@ export function detectAssetId(text: string): string {
     return pairMatch?.assetId ?? "forex";
   }
 
+  // Keyword-based detection for articles that mention central banks or economies
+  // without explicit currency codes
+  const lowerText = text.toLowerCase();
+  const eurKeywords = ["ecb", "eurozone", "euro area", "european central bank", "lagarde", "euro"];
+  const usdKeywords = ["fed", "federal reserve", "powell", "fomc", "us economy", "dollar", "treasury"];
+
+  const hasEurContext = eurKeywords.some((kw) => lowerText.includes(kw));
+  const hasUsdContext = usdKeywords.some((kw) => lowerText.includes(kw));
+
+  if (hasEurContext && hasUsdContext) return "eurusd";
+  if (hasEurContext) return "eurusd"; // EUR news impacts EURUSD
+  if (hasUsdContext) return "eurusd"; // USD news impacts EURUSD (primary pair)
+
   return "forex";
 }
 
 /**
- * Compute relevance score based on number of currency mentions.
- * - 0 mentions → 0.3 (generic forex article)
- * - 1 mention → 0.5
- * - 2+ mentions (pair match) → 0.8
+ * Compute relevance score based on currency mentions and keyword density.
+ * - 0 relevant mentions → 0.3 (generic forex article)
+ * - 1 currency or keyword mention → 0.5
+ * - 2+ currencies or strong keyword match → 0.8
+ * - Direct pair mention (EUR/USD, EURUSD) → 0.9
  */
 export function computeRelevanceScore(text: string): number {
   const upperText = text.toUpperCase();
+  const lowerText = text.toLowerCase();
   const mentioned = CURRENCY_CODES.filter((code) => upperText.includes(code));
 
+  // Direct pair name match is highest relevance
+  if (upperText.includes("EUR/USD") || upperText.includes("EURUSD")) return 0.9;
+
+  // Two currencies from a known pair
   if (mentioned.length >= 2) return 0.8;
+
+  // Strong context keywords boost relevance
+  const strongKeywords = ["ecb", "fed", "eurozone", "fomc", "nonfarm", "nfp", "cpi", "gdp", "rate decision", "inflation"];
+  const hasStrongKeyword = strongKeywords.some((kw) => lowerText.includes(kw));
+
+  if (hasStrongKeyword && mentioned.length >= 1) return 0.8;
+  if (hasStrongKeyword) return 0.7;
   if (mentioned.length === 1) return 0.5;
+
   return 0.3;
 }
 
@@ -172,7 +200,7 @@ async function fetchNewsAPI(
   const fromStr = fromDate.toISOString().split("T")[0];
   const toStr = now.toISOString().split("T")[0];
 
-  const url = `https://newsapi.org/v2/everything?q=forex+currency&from=${fromStr}&to=${toStr}&sortBy=publishedAt&pageSize=${config.maxArticlesPerSource}&apiKey=${apiKey}`;
+  const url = `https://newsapi.org/v2/everything?q=(EUR+USD)+OR+(ECB+rate)+OR+(Fed+rate)+OR+(EURUSD)+OR+(forex+dollar+euro)&from=${fromStr}&to=${toStr}&sortBy=publishedAt&pageSize=${config.maxArticlesPerSource}&apiKey=${apiKey}`;
 
   rateLimits.recordRequest("news_api");
   const response = await fetch(url);
@@ -305,6 +333,28 @@ export async function ingestNews(
     const message = err instanceof Error ? err.message : String(err);
     logError("newsapi_fetch", message);
     result.errors.push(`NewsAPI fetch failed: ${message}`);
+  }
+
+  // ── Score sentiment via Gemini (fail-forward) ────────────────────────────
+  const allArticles = [...finnhubArticles, ...newsapiArticles];
+  if (allArticles.length > 0) {
+    try {
+      const { scored, neutral_fallback } = await scoreArticleSentiment(allArticles);
+      console.log(
+        JSON.stringify({
+          severity: "INFO",
+          component: "integrity",
+          stage: "news_ingestion",
+          substage: "sentiment_scoring",
+          message: `Gemini scored ${scored} articles, ${neutral_fallback} neutral`,
+          total: allArticles.length,
+        })
+      );
+    } catch (err) {
+      const message = err instanceof Error ? err.message : String(err);
+      logError("sentiment_scoring", `Sentiment scoring failed (non-fatal): ${message}`);
+      // Articles keep their default "neutral" sentiment_hint — fail-forward
+    }
   }
 
   // ── Store Finnhub articles ──────────────────────────────────────────────

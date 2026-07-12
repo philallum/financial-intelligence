@@ -91,7 +91,7 @@ export const RESEARCH_ASSETS: readonly ResearchAsset[] = [
       similarity: true,
       confidence: true,
       tradeability: true,
-      sentiment: false,
+      sentiment: true,
       macro: true,
     },
   },
