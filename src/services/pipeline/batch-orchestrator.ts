@@ -373,10 +373,12 @@ export class BatchOrchestrator {
       if (!engines.sentiment || !this.handlers.sentiment) return undefined;
       try {
         // Fetch articles from news_articles table (24-hour window ending at candle boundary)
+        // Include both asset-specific articles AND generic 'forex' articles (which affect the primary pair)
+        const assetLower = input.asset.toLowerCase();
         const { data: articlesData, error: articlesError } = await this.supabase
           .from('news_articles')
           .select('id, asset_id, headline, summary, published_at, sentiment_hint, relevance_score, source')
-          .eq('asset_id', input.asset)
+          .in('asset_id', [assetLower, 'forex'])
           .gte('published_at', new Date(new Date(input.candle_boundary).getTime() - 24 * 3600000).toISOString())
           .lte('published_at', input.candle_boundary)
           .order('published_at', { ascending: false });

@@ -28,7 +28,9 @@ import type { ResearchForecastRecord, SimilarityArchiveRecord } from './research
 import { traceEngineExecution } from './services/observability/trace-emitter.js';
 import { computeTopology } from './engines/topology-engine.js';
 import { classifyRegimeV2 } from './engines/regime-engine-v2.js';
-import type { OHLC } from './types/index.js';
+import { fetchMacroData } from './services/ingestion/macro-fetcher.js';
+import { createDefaultRegistry } from './services/ingestion/rate-limiter.js';
+import type { OHLC, MacroContext } from './types/index.js';
 import { getProcessableAssets } from './config/research-assets.js';
 import type { CalibrationParameters } from './engines/confidence-engine-v2.js';
 import { validateCalibrationParameters } from './engines/confidence-engine-v2.js';
@@ -68,7 +70,37 @@ function createStageHandlers(supabase: SupabaseClient, calibrationParams: Calibr
     },
     async fingerprint(input) {
       const { generateFingerprint } = await import('./engines/fingerprint-engine.js');
-      return generateFingerprint(input);
+
+      // Fetch live intermarket data (DXY, VIX, SPX, US10Y) — non-blocking
+      // This enriches the fingerprint's extended features (macro_state, sentiment_summary)
+      // and provides the L4 fallback if MacroVector is unavailable.
+      let marketContext: MacroContext | undefined;
+      try {
+        const rateLimits = createDefaultRegistry();
+        const macroResult = await fetchMacroData({
+          twelveDataApiKey: env.TWELVE_DATA_API_KEY,
+          alphaVantageApiKey: env.ALPHA_VANTAGE_API_KEY,
+          rateLimitRegistry: rateLimits,
+          timeoutMs: 8000,
+        });
+        // Only use if at least one data point was fetched
+        if (macroResult.data.dxy !== null || macroResult.data.vix !== null || macroResult.data.spx !== null) {
+          marketContext = macroResult.data;
+          console.log(
+            `[BatchEntry] Macro context fetched: DXY=${macroResult.data.dxy}, VIX=${macroResult.data.vix}, SPX=${macroResult.data.spx}, US10Y=${macroResult.data.us10y} (${macroResult.fetch_time_ms}ms)`,
+          );
+        }
+        if (macroResult.errors.length > 0) {
+          console.warn(`[BatchEntry] Macro fetch warnings: ${macroResult.errors.map(e => `${e.symbol}: ${e.error}`).join(', ')}`);
+        }
+      } catch (err) {
+        console.warn(`[BatchEntry] Macro data fetch failed (non-blocking): ${err instanceof Error ? err.message : String(err)}`);
+      }
+
+      return generateFingerprint({
+        ...input,
+        ...(marketContext && { market_context: marketContext }),
+      });
     },
     async topology(fingerprintId, asset) {
       // Fetch up to 120 most recent 4H candles for the asset, ordered chronologically (ASC)
@@ -212,7 +244,23 @@ function createStageHandlers(supabase: SupabaseClient, calibrationParams: Calibr
         const l4 = cosineSimilarity(fp.state_layers.macro_context, parseVector(c.macro_vector));
         const l5 = cosineSimilarity(fp.state_layers.sentiment_pressure, parseVector(c.sentiment_vector));
 
-        const score = l1 * weights.market_structure + l2 * weights.volatility + l3 * weights.liquidity + l4 * weights.macro + l5 * weights.sentiment;
+        let score = l1 * weights.market_structure + l2 * weights.volatility + l3 * weights.liquidity + l4 * weights.macro + l5 * weights.sentiment;
+
+        // Session match bonus: prefer candidates from the same session (5% boost)
+        // This encodes temporal context without adding extra dimensions — candidates
+        // from the same session are more likely to exhibit similar directional patterns.
+        const candidateRegime = c.regime as { session?: string; volatility_regime?: string } | null;
+        if (candidateRegime?.session === fp.regime.session) {
+          score = Math.min(score * 1.05, 1.0);
+        }
+
+        // Volatility regime match bonus: prefer candidates from same volatility regime (3% boost)
+        // A HIGH-vol candle's outcome distribution differs fundamentally from LOW-vol.
+        // This ensures regime-appropriate matches bubble up.
+        if (candidateRegime?.volatility_regime === fp.regime.volatility_regime) {
+          score = Math.min(score * 1.03, 1.0);
+        }
+
         return { fingerprint_id: c.fingerprint_id, score, l1, l2, l3, l4, l5 };
       });
 

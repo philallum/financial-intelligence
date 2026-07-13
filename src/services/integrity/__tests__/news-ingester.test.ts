@@ -3,6 +3,11 @@ import { detectAssetId, computeRelevanceScore, ingestNews } from '../news-ingest
 import type { NewsIngestionConfig } from '../types.js';
 import { RateLimitRegistry } from '../../ingestion/rate-limiter.js';
 
+// Mock sentiment scorer to avoid Gemini calls in tests
+vi.mock('../sentiment-scorer.js', () => ({
+  scoreArticleSentiment: vi.fn().mockResolvedValue({ scored: 0, neutral_fallback: 0 }),
+}));
+
 describe('detectAssetId', () => {
   it('returns "eurusd" when both EUR and USD are mentioned', () => {
     expect(detectAssetId('EUR strengthens against USD')).toBe('eurusd');
@@ -39,8 +44,16 @@ describe('detectAssetId', () => {
 });
 
 describe('computeRelevanceScore', () => {
-  it('returns 0.8 when two or more currencies are mentioned', () => {
-    expect(computeRelevanceScore('EUR/USD pair analysis')).toBe(0.8);
+  it('returns 0.9 when direct pair name is mentioned (EUR/USD)', () => {
+    expect(computeRelevanceScore('EUR/USD pair analysis')).toBe(0.9);
+  });
+
+  it('returns 0.8 when two or more currencies are mentioned without direct pair name', () => {
+    expect(computeRelevanceScore('EUR weakens against USD today')).toBe(0.8);
+  });
+
+  it('returns 0.7 when strong keyword is present without currency', () => {
+    expect(computeRelevanceScore('ECB rate decision due tomorrow')).toBe(0.7);
   });
 
   it('returns 0.5 when exactly one currency is mentioned', () => {

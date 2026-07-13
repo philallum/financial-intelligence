@@ -169,7 +169,10 @@
       const baseUrl = document.getElementById('api-url').value.replace(/\/$/, '');
       const res = await fetch(`${baseUrl}/v1/forecast/EURUSD`);
       if (!res.ok) throw new Error('API returned ' + res.status);
-      return res.json();
+      const json = await res.json();
+      // API returns wrapped envelope {data: {...}, meta: {...}} for anonymous requests
+      // Unwrap to get the forecast data directly
+      return json.data || json;
     }
 
     function renderForecastCard(data) {

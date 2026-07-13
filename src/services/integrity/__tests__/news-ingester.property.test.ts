@@ -4,6 +4,11 @@ import { detectAssetId, computeRelevanceScore, ingestNews } from '../news-ingest
 import { RateLimitRegistry } from '../../ingestion/rate-limiter.js';
 import type { NewsIngestionConfig } from '../types.js';
 
+// Mock sentiment scorer to avoid Gemini calls in tests
+vi.mock('../sentiment-scorer.js', () => ({
+  scoreArticleSentiment: vi.fn().mockResolvedValue({ scored: 0, neutral_fallback: 0 }),
+}));
+
 /**
  * Property 4: News Article Deduplication
  * Validates: Requirements 4.3, 9.2
@@ -250,11 +255,13 @@ describe('Property 4: News Article Deduplication', () => {
    * Verifies that computeRelevanceScore always returns a value in {0.3, 0.5, 0.8}
    * and is deterministic for any input.
    */
-  it('computeRelevanceScore always returns 0.3, 0.5, or 0.8 and is deterministic', () => {
+  it('computeRelevanceScore always returns a value in [0.3, 0.9] and is deterministic', () => {
     fc.assert(
       fc.property(arbTextWithCurrencies, (text) => {
         const score = computeRelevanceScore(text);
-        expect([0.3, 0.5, 0.8]).toContain(score);
+        expect(score).toBeGreaterThanOrEqual(0.3);
+        expect(score).toBeLessThanOrEqual(0.9);
+        expect([0.3, 0.5, 0.7, 0.8, 0.9]).toContain(score);
 
         // Deterministic
         expect(computeRelevanceScore(text)).toBe(score);

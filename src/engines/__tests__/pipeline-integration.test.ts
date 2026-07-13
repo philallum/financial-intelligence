@@ -180,7 +180,7 @@ function createMockSupabase(overrides: {
     if (table === 'news_articles') {
       return {
         select: vi.fn().mockReturnValue({
-          eq: vi.fn().mockReturnValue({
+          in: vi.fn().mockReturnValue({
             gte: vi.fn().mockReturnValue({
               lte: vi.fn().mockReturnValue({
                 order: vi.fn().mockResolvedValue({
