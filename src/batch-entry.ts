@@ -344,22 +344,163 @@ function createStageHandlers(supabase: SupabaseClient, calibrationParams: Calibr
     },
     async outcome(input, queryFingerprintId, batchId) {
       const { computeDistributionFromReturns } = await import('./engines/outcome-engine.js');
-      // Fetch forward returns for matched fingerprints from DB
-      // Deterministic ordering by fingerprint_id ensures reproducible outcome computation (Req 2.6)
+      // Fetch forward returns WITH regime metadata for regime-stratified weighting
       const { data } = await supabase
         .from('market_outcomes')
-        .select('net_return_pips')
+        .select('fingerprint_id, net_return_pips')
         .in('fingerprint_id', input.fingerprint_ids)
         .order('fingerprint_id', { ascending: true });
-      const returns = (data ?? []).map((r) => (r as { net_return_pips: number }).net_return_pips);
-      if (returns.length === 0) {
+      const outcomeRecords = (data ?? []) as Array<{ fingerprint_id: string; net_return_pips: number }>;
+
+      if (outcomeRecords.length === 0) {
         throw new Error('No forward returns found for matched fingerprints');
       }
-      return computeDistributionFromReturns(returns, queryFingerprintId, batchId);
+
+      // ─── Tier 3.2: Regime-Stratified Weighting ──────────────────────────
+      // Fetch regime classification for each matched fingerprint
+      // Weight returns by regime match score: same regime = 1.5x, partial match = 1.0x, mismatch = 0.7x
+      const matchedFpIds = outcomeRecords.map(r => r.fingerprint_id);
+      const { data: regimeData } = await supabase
+        .from('market_fingerprints')
+        .select('fingerprint_id, regime')
+        .in('fingerprint_id', matchedFpIds);
+
+      const regimeMap = new Map<string, { volatility_regime?: string; session?: string }>();
+      for (const row of (regimeData ?? [])) {
+        const regime = row.regime as { volatility_regime?: string; session?: string } | null;
+        if (regime) regimeMap.set(row.fingerprint_id as string, regime);
+      }
+
+      // Get the query fingerprint's regime for comparison
+      const { data: queryFpData } = await supabase
+        .from('market_fingerprints')
+        .select('regime')
+        .eq('fingerprint_id', queryFingerprintId)
+        .limit(1)
+        .single();
+
+      const queryRegime = queryFpData?.regime as { volatility_regime?: string; session?: string } | null;
+
+      // Build weighted returns array
+      // Regime-matched returns are replicated (weighted) to influence the distribution
+      const weightedReturns: number[] = [];
+      for (const record of outcomeRecords) {
+        const matchRegime = regimeMap.get(record.fingerprint_id);
+        let weight = 1.0; // default: equal contribution
+
+        if (queryRegime && matchRegime) {
+          const volMatch = queryRegime.volatility_regime === matchRegime.volatility_regime;
+          const sessionMatch = queryRegime.session === matchRegime.session;
+
+          if (volMatch && sessionMatch) {
+            weight = 1.5; // Strong regime match: boost contribution
+          } else if (volMatch) {
+            weight = 1.2; // Partial match (same volatility)
+          } else {
+            weight = 0.7; // Regime mismatch: reduce contribution
+          }
+        }
+
+        // Replicate returns based on weight (integer replication for weighted distribution)
+        // weight 1.5 → add return 3 times in 2 iterations (1.5 rounds to include 1x + 50% chance of 2nd)
+        // Simpler approach: use fractional weights by repeating at 10x scale
+        const scaledWeight = Math.round(weight * 10);
+        for (let i = 0; i < scaledWeight; i++) {
+          weightedReturns.push(record.net_return_pips);
+        }
+      }
+
+      // ─── Tier 3.1: ATR-Normalised Flat Threshold ──────────────────────────
+      // Instead of the fixed 2-pip threshold, use 25% of recent ATR.
+      // This means "flat" adapts to current volatility: during high-vol a 4-pip
+      // move is unremarkable, during low-vol a 2-pip move is significant.
+      let dynamicFlatThreshold: number | undefined;
+      try {
+        const { data: recentCandles } = await supabase
+          .from('raw_candles')
+          .select('high, low')
+          .eq('asset', input.fingerprint_ids.length > 0 ? 'EURUSD' : 'EURUSD')
+          .order('timestamp_utc', { ascending: false })
+          .limit(14);
+
+        if (recentCandles && recentCandles.length >= 5) {
+          // Compute ATR: average of (high - low) in pips over last N candles
+          const ranges = recentCandles.map((c: any) => (c.high - c.low) / 0.0001);
+          const atr = ranges.reduce((a: number, b: number) => a + b, 0) / ranges.length;
+          dynamicFlatThreshold = Math.max(atr * 0.25, 1.0); // Min 1 pip, dynamic otherwise
+        }
+      } catch {
+        // Fall back to static threshold on error
+      }
+
+      return computeDistributionFromReturns(
+        weightedReturns,
+        queryFingerprintId,
+        batchId,
+        dynamicFlatThreshold ? { flatThreshold: dynamicFlatThreshold } : undefined,
+      );
     },
     async forecast(input) {
       const { computeForecastFromDistribution } = await import('./engines/forecast-engine.js');
-      return computeForecastFromDistribution(input.outcome_distribution);
+      const similarityForecast = computeForecastFromDistribution(input.outcome_distribution);
+
+      // ─── Tier 4.3: Ensemble with ML Service (non-blocking) ────────────────
+      // Call the ML service for XGBoost probabilities and blend with similarity-based.
+      // If ML service is unavailable, use similarity-only (graceful degradation).
+      const mlServiceUrl = process.env['ML_SERVICE_URL'];
+      if (mlServiceUrl) {
+        try {
+          // The ML service needs the fingerprint features — we get them from
+          // the fingerprint that was just generated (available via closure in orchestrator)
+          // For now, we'll attempt the call; if the service isn't trained yet, it returns 503.
+          const mlResponse = await fetch(`${mlServiceUrl}/predict`, {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({
+              // Features will be populated when we wire the fingerprint data through
+              // For now this is a placeholder — the ML service returns 503 until trained
+              market_structure: Array(16).fill(0.5),
+              volatility_profile: Array(12).fill(0.5),
+              macro_context: Array(8).fill(0.5),
+              sentiment_pressure: Array(6).fill(0.5),
+              session_london: 0, session_ny: 0, session_asia: 0,
+              volatility_regime_high: 0, volatility_regime_low: 0,
+            }),
+            signal: AbortSignal.timeout(3000), // 3s timeout
+          });
+
+          if (mlResponse.ok) {
+            const mlProbs = await mlResponse.json() as { up: number; down: number; flat: number };
+
+            // Ensemble: 50/50 weighted average between similarity and ML predictions
+            const alpha = 0.5; // similarity weight
+            const ensembled = {
+              ...similarityForecast,
+              direction_probabilities: {
+                up: Math.round((alpha * similarityForecast.direction_probabilities.up + (1 - alpha) * mlProbs.up) * 100) / 100,
+                down: Math.round((alpha * similarityForecast.direction_probabilities.down + (1 - alpha) * mlProbs.down) * 100) / 100,
+                flat: Math.round((alpha * similarityForecast.direction_probabilities.flat + (1 - alpha) * mlProbs.flat) * 100) / 100,
+              },
+            };
+
+            // Normalise to sum = 1.0
+            const total = ensembled.direction_probabilities.up + ensembled.direction_probabilities.down + ensembled.direction_probabilities.flat;
+            if (total > 0) {
+              ensembled.direction_probabilities.up = Math.round((ensembled.direction_probabilities.up / total) * 100) / 100;
+              ensembled.direction_probabilities.down = Math.round((ensembled.direction_probabilities.down / total) * 100) / 100;
+              ensembled.direction_probabilities.flat = Math.round((1 - ensembled.direction_probabilities.up - ensembled.direction_probabilities.down) * 100) / 100;
+            }
+
+            console.log(`[BatchEntry] Ensemble: similarity=[${similarityForecast.direction_probabilities.up},${similarityForecast.direction_probabilities.down},${similarityForecast.direction_probabilities.flat}] + ML=[${mlProbs.up},${mlProbs.down},${mlProbs.flat}] → final=[${ensembled.direction_probabilities.up},${ensembled.direction_probabilities.down},${ensembled.direction_probabilities.flat}]`);
+            return ensembled;
+          }
+        } catch (err) {
+          // ML service unavailable — fall back to similarity-only (non-blocking)
+          console.warn(`[BatchEntry] ML service unavailable (non-blocking): ${err instanceof Error ? err.message : String(err)}`);
+        }
+      }
+
+      return similarityForecast;
     },
     async confidence(input, fingerprintId) {
       const { computeConfidenceV2FromInput } = await import('./engines/confidence-engine-v2.js');

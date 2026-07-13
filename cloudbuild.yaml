@@ -84,6 +84,20 @@ steps:
     waitFor: ['run-tests', 'build-ts']
     id: 'build-integrity'
 
+  # --- Step 3b: Build ML service image ---
+  - name: 'gcr.io/cloud-builders/docker'
+    args:
+      - 'build'
+      - '-f'
+      - 'Dockerfile.ml'
+      - '-t'
+      - '${_REGISTRY}/$PROJECT_ID/${_REPOSITORY}/ml:${_TAG}'
+      - '-t'
+      - '${_REGISTRY}/$PROJECT_ID/${_REPOSITORY}/ml:latest'
+      - '.'
+    waitFor: ['install-deps']
+    id: 'build-ml'
+
   # --- Step 4: Push batch image ---
   - name: 'gcr.io/cloud-builders/docker'
     args: ['push', '${_REGISTRY}/$PROJECT_ID/${_REPOSITORY}/batch:${_TAG}']
@@ -116,6 +130,17 @@ steps:
     args: ['push', '${_REGISTRY}/$PROJECT_ID/${_REPOSITORY}/integrity:latest']
     waitFor: ['build-integrity']
     id: 'push-integrity-latest'
+
+  # --- Step 6b: Push ML image ---
+  - name: 'gcr.io/cloud-builders/docker'
+    args: ['push', '${_REGISTRY}/$PROJECT_ID/${_REPOSITORY}/ml:${_TAG}']
+    waitFor: ['build-ml']
+    id: 'push-ml'
+
+  - name: 'gcr.io/cloud-builders/docker'
+    args: ['push', '${_REGISTRY}/$PROJECT_ID/${_REPOSITORY}/ml:latest']
+    waitFor: ['build-ml']
+    id: 'push-ml-latest'
 
   # --- Step 7: Deploy batch Cloud Run Job ---
   - name: 'gcr.io/google.com/cloudsdktool/cloud-sdk'
@@ -174,6 +199,25 @@ steps:
     waitFor: ['push-integrity', 'push-integrity-latest']
     id: 'deploy-integrity'
 
+  # --- Step 10: Deploy ML Cloud Run Service ---
+  - name: 'gcr.io/google.com/cloudsdktool/cloud-sdk'
+    entrypoint: 'gcloud'
+    args:
+      - 'run'
+      - 'deploy'
+      - 'fip-ml'
+      - '--image=${_REGISTRY}/$PROJECT_ID/${_REPOSITORY}/ml:${_TAG}'
+      - '--region=${_REGION}'
+      - '--memory=512Mi'
+      - '--cpu=1'
+      - '--max-instances=1'
+      - '--min-instances=0'
+      - '--port=5000'
+      - '--no-allow-unauthenticated'
+      - '--update-secrets=SUPABASE_URL=SUPABASE_URL:latest,SUPABASE_SERVICE_ROLE_KEY=SUPABASE_SERVICE_ROLE_KEY:latest'
+    waitFor: ['push-ml', 'push-ml-latest']
+    id: 'deploy-ml'
+
 
 
 images:
@@ -183,6 +227,8 @@ images:
   - '${_REGISTRY}/$PROJECT_ID/${_REPOSITORY}/api:latest'
   - '${_REGISTRY}/$PROJECT_ID/${_REPOSITORY}/integrity:${_TAG}'
   - '${_REGISTRY}/$PROJECT_ID/${_REPOSITORY}/integrity:latest'
+  - '${_REGISTRY}/$PROJECT_ID/${_REPOSITORY}/ml:${_TAG}'
+  - '${_REGISTRY}/$PROJECT_ID/${_REPOSITORY}/ml:latest'
 
 options:
   logging: CLOUD_LOGGING_ONLY

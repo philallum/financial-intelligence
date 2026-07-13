@@ -104,12 +104,14 @@ export async function computeOutcomeDistribution(
  * @param forwardReturns - Array of forward 4H returns in pips
  * @param queryFingerprintId - The fingerprint ID of the query
  * @param batchId - Current batch processing ID
+ * @param options - Optional overrides (e.g., dynamic flat threshold from ATR)
  * @returns OutcomeDistribution
  */
 export function computeDistributionFromReturns(
   forwardReturns: number[],
   queryFingerprintId: string,
   batchId: string,
+  options?: { flatThreshold?: number },
 ): OutcomeDistribution {
   const n = forwardReturns.length;
 
@@ -117,12 +119,14 @@ export function computeDistributionFromReturns(
     throw new Error("Cannot compute distribution from empty returns array");
   }
 
+  const effectiveThreshold = options?.flatThreshold ?? FLAT_THRESHOLD;
+
   // Sort returns for percentile computation
   const sorted = [...forwardReturns].sort((a, b) => a - b);
 
   const meanReturn = computeMean(forwardReturns);
   const medianReturn = computeMedian(sorted);
-  const directionProbability = computeDirectionProbability(forwardReturns);
+  const directionProbability = computeDirectionProbability(forwardReturns, effectiveThreshold);
   const volatilityProfile = computeVolatilityProfile(forwardReturns, meanReturn);
   const riskRange = computeRiskRange(sorted);
   const confidenceInputs = computeConfidenceInputs(forwardReturns, directionProbability);
@@ -181,14 +185,18 @@ export function computeMedian(sorted: number[]): number {
 
 /**
  * Classify each return and compute direction probabilities.
- * FLAT: |R| ≤ FLAT_THRESHOLD (2 pips)
- * UP: R > +FLAT_THRESHOLD
- * DOWN: R < -FLAT_THRESHOLD
+ * FLAT: |R| ≤ threshold
+ * UP: R > +threshold
+ * DOWN: R < -threshold
  *
  * Equal weight — each match contributes 1/N.
+ *
+ * @param returns - Array of forward returns in pips
+ * @param threshold - Dynamic flat threshold (defaults to FLAT_THRESHOLD if not provided)
  */
 export function computeDirectionProbability(
   returns: number[],
+  threshold: number = FLAT_THRESHOLD,
 ): { up: number; down: number; flat: number } {
   const n = returns.length;
   let upCount = 0;
@@ -196,9 +204,9 @@ export function computeDirectionProbability(
   let flatCount = 0;
 
   for (const r of returns) {
-    if (Math.abs(r) <= FLAT_THRESHOLD) {
+    if (Math.abs(r) <= threshold) {
       flatCount++;
-    } else if (r > FLAT_THRESHOLD) {
+    } else if (r > threshold) {
       upCount++;
     } else {
       downCount++;
