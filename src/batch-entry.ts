@@ -34,6 +34,17 @@ import type { OHLC, MacroContext } from './types/index.js';
 import { getProcessableAssets } from './config/research-assets.js';
 import type { CalibrationParameters } from './engines/confidence-engine-v2.js';
 import { validateCalibrationParameters } from './engines/confidence-engine-v2.js';
+import { DiagnosticsCollector } from './services/observability/diagnostics-collector.js';
+import type {
+  SentimentDiagnostics,
+  MacroContextDiagnostics,
+  MLServiceDiagnostics,
+  MarketContextDiagnostics,
+  SimilarityDiagnostics,
+  OutcomeDiagnostics,
+  ForecastDiagnostics,
+  GeminiDiagnostics,
+} from './services/observability/diagnostics-types.js';
 
 /**
  * Compute the current candle boundary timestamp.
@@ -56,10 +67,40 @@ function getCurrentCandleBoundary(): string {
 }
 
 /**
+ * Mutable accumulator for per-stage diagnostics data.
+ * Stage handlers populate this during execution. After orchestrator.execute()
+ * returns, the accumulated data is fed to a DiagnosticsCollector and persisted.
+ */
+interface DiagnosticsAccumulator {
+  marketContext: MarketContextDiagnostics | null;
+  sentiment: SentimentDiagnostics | null;
+  macroContext: MacroContextDiagnostics | null;
+  similarity: SimilarityDiagnostics | null;
+  outcome: OutcomeDiagnostics | null;
+  forecast: ForecastDiagnostics | null;
+  mlService: MLServiceDiagnostics | null;
+  gemini: GeminiDiagnostics | null;
+}
+
+/** Create a fresh (empty) diagnostics accumulator. */
+function createDiagnosticsAccumulator(): DiagnosticsAccumulator {
+  return {
+    marketContext: null,
+    sentiment: null,
+    macroContext: null,
+    similarity: null,
+    outcome: null,
+    forecast: null,
+    mlService: null,
+    gemini: null,
+  };
+}
+
+/**
  * Create stage handlers that delegate to the real engine and service implementations.
  * Each handler follows the contract defined in batch-orchestrator.ts.
  */
-function createStageHandlers(supabase: SupabaseClient, calibrationParams: CalibrationParameters): StageHandlers {
+function createStageHandlers(supabase: SupabaseClient, calibrationParams: CalibrationParameters, diagAccumulator: DiagnosticsAccumulator): StageHandlers {
   const similarityArchiver = createSimilarityArchiver(supabase);
 
   return {
@@ -96,6 +137,16 @@ function createStageHandlers(supabase: SupabaseClient, calibrationParams: Calibr
       } catch (err) {
         console.warn(`[BatchEntry] Macro data fetch failed (non-blocking): ${err instanceof Error ? err.message : String(err)}`);
       }
+
+      // Record market context diagnostics
+      try {
+        diagAccumulator.marketContext = {
+          available: !!marketContext,
+          dxy: marketContext?.dxy ?? null,
+          vix: marketContext?.vix ?? null,
+          spx: marketContext?.spx ?? null,
+        };
+      } catch { /* diagnostics must never affect pipeline */ }
 
       return generateFingerprint({
         ...input,
@@ -336,6 +387,23 @@ function createStageHandlers(supabase: SupabaseClient, calibrationParams: Calibr
         await similarityArchiver.persistMatches(archiveRecords);
       }
 
+      // Record similarity diagnostics
+      try {
+        // Count session bonus and regime bonus candidates from the scored pool
+        let sessionBonusCount = 0;
+        let regimeBonusCount = 0;
+        for (const c of (candidates as CandidateRow[])) {
+          const candidateRegime = c.regime as { session?: string; volatility_regime?: string } | null;
+          if (candidateRegime?.session === fp.regime.session) sessionBonusCount++;
+          if (candidateRegime?.volatility_regime === fp.regime.volatility_regime) regimeBonusCount++;
+        }
+        diagAccumulator.similarity = {
+          match_count: matches.length,
+          session_bonus_count: sessionBonusCount,
+          regime_bonus_count: regimeBonusCount,
+        };
+      } catch { /* diagnostics must never affect pipeline */ }
+
       return {
         matches,
         match_count: matches.length,
@@ -433,6 +501,14 @@ function createStageHandlers(supabase: SupabaseClient, calibrationParams: Calibr
         // Fall back to static threshold on error
       }
 
+      // Record outcome diagnostics
+      try {
+        diagAccumulator.outcome = {
+          dynamic_flat_threshold: dynamicFlatThreshold ?? 2.0,
+          weighted_return_count: weightedReturns.length,
+        };
+      } catch { /* diagnostics must never affect pipeline */ }
+
       return computeDistributionFromReturns(
         weightedReturns,
         queryFingerprintId,
@@ -453,6 +529,7 @@ function createStageHandlers(supabase: SupabaseClient, calibrationParams: Calibr
           // The ML service needs the fingerprint features — we get them from
           // the fingerprint that was just generated (available via closure in orchestrator)
           // For now, we'll attempt the call; if the service isn't trained yet, it returns 503.
+          const mlStartTime = Date.now();
           const mlResponse = await fetch(`${mlServiceUrl}/predict`, {
             method: 'POST',
             headers: { 'Content-Type': 'application/json' },
@@ -468,6 +545,7 @@ function createStageHandlers(supabase: SupabaseClient, calibrationParams: Calibr
             }),
             signal: AbortSignal.timeout(3000), // 3s timeout
           });
+          const mlLatencyMs = Date.now() - mlStartTime;
 
           if (mlResponse.ok) {
             const mlProbs = await mlResponse.json() as { up: number; down: number; flat: number };
@@ -492,13 +570,56 @@ function createStageHandlers(supabase: SupabaseClient, calibrationParams: Calibr
             }
 
             console.log(`[BatchEntry] Ensemble: similarity=[${similarityForecast.direction_probabilities.up},${similarityForecast.direction_probabilities.down},${similarityForecast.direction_probabilities.flat}] + ML=[${mlProbs.up},${mlProbs.down},${mlProbs.flat}] → final=[${ensembled.direction_probabilities.up},${ensembled.direction_probabilities.down},${ensembled.direction_probabilities.flat}]`);
+
+            // Record ML service and forecast diagnostics (ML was called and succeeded)
+            try {
+              diagAccumulator.mlService = {
+                called: true,
+                response: mlProbs,
+                latency_ms: mlLatencyMs,
+              };
+              diagAccumulator.forecast = {
+                similarity_only: similarityForecast.direction_probabilities,
+                ensemble: ensembled.direction_probabilities,
+                alpha_weight: alpha,
+              };
+            } catch { /* diagnostics must never affect pipeline */ }
+
             return ensembled;
+          } else {
+            // ML responded but not ok — record as called but no usable response
+            try {
+              diagAccumulator.mlService = {
+                called: true,
+                response: null,
+                latency_ms: mlLatencyMs,
+              };
+            } catch { /* diagnostics must never affect pipeline */ }
           }
         } catch (err) {
           // ML service unavailable — fall back to similarity-only (non-blocking)
           console.warn(`[BatchEntry] ML service unavailable (non-blocking): ${err instanceof Error ? err.message : String(err)}`);
+
+          // Record ML service diagnostics (called but failed)
+          try {
+            diagAccumulator.mlService = { called: true, response: null, latency_ms: null };
+          } catch { /* diagnostics must never affect pipeline */ }
         }
+      } else {
+        // ML service URL not configured — record as not called
+        try {
+          diagAccumulator.mlService = { called: false, response: null, latency_ms: null };
+        } catch { /* diagnostics must never affect pipeline */ }
       }
+
+      // Record forecast diagnostics (similarity-only, no ensemble)
+      try {
+        diagAccumulator.forecast = {
+          similarity_only: similarityForecast.direction_probabilities,
+          ensemble: similarityForecast.direction_probabilities,
+          alpha_weight: 1.0,
+        };
+      } catch { /* diagnostics must never affect pipeline */ }
 
       return similarityForecast;
     },
@@ -538,11 +659,45 @@ function createStageHandlers(supabase: SupabaseClient, calibrationParams: Calibr
     },
     async sentiment(input) {
       const { computeSentiment } = await import('./engines/sentiment-engine.js');
-      return computeSentiment(input);
+      const output = computeSentiment(input);
+
+      // Record sentiment diagnostics
+      try {
+        const vectorValues = Object.values(output.vector) as [number, number, number, number, number, number];
+        diagAccumulator.sentiment = {
+          article_count: output.article_count,
+          window_hours: input.window_hours,
+          sentiment_vector: vectorValues,
+          sentiment_score: output.sentiment_score,
+          confidence_factor: output.confidence_factor,
+        };
+      } catch { /* diagnostics must never affect pipeline */ }
+
+      // Record Gemini diagnostics (scored articles = those with non-zero sentiment_hint)
+      try {
+        const scoredArticleCount = input.articles.filter(
+          (a) => a.sentiment_hint !== null && a.sentiment_hint !== 0,
+        ).length;
+        diagAccumulator.gemini = { scored_article_count: scoredArticleCount };
+      } catch { /* diagnostics must never affect pipeline */ }
+
+      return output;
     },
     async macro_context(input) {
       const { computeMacroContext } = await import('./engines/macro-context-engine.js');
-      return computeMacroContext(input);
+      const output = computeMacroContext(input);
+
+      // Record macro context diagnostics
+      try {
+        const vectorValues = Object.values(output.vector) as [number, number, number, number, number, number, number, number];
+        diagAccumulator.macroContext = {
+          event_count: output.event_count,
+          macro_vector: vectorValues,
+          macro_state: String(output.macro_state),
+        };
+      } catch { /* diagnostics must never affect pipeline */ }
+
+      return output;
     },
     async research_persist(data) {
       const archiveWriter = createResearchArchiveWriter(supabase);
@@ -618,7 +773,8 @@ async function main(): Promise<void> {
     process.exit(1);
   }
 
-  const handlers = createStageHandlers(supabase, calibrationParams);
+  const diagAccumulator = createDiagnosticsAccumulator();
+  const handlers = createStageHandlers(supabase, calibrationParams, diagAccumulator);
 
   const orchestrator = new BatchOrchestrator({
     supabaseClient: supabase,
@@ -634,6 +790,16 @@ async function main(): Promise<void> {
   for (const asset of processableAssets) {
     for (const timeframe of asset.supportedTimeframes) {
       console.log(`[BatchEntry] Processing ${asset.symbol} (${timeframe})`);
+
+      // Reset diagnostics accumulator for this asset/timeframe execution
+      diagAccumulator.marketContext = null;
+      diagAccumulator.sentiment = null;
+      diagAccumulator.macroContext = null;
+      diagAccumulator.similarity = null;
+      diagAccumulator.outcome = null;
+      diagAccumulator.forecast = null;
+      diagAccumulator.mlService = null;
+      diagAccumulator.gemini = null;
 
       try {
         const result = await orchestrator.execute({
@@ -652,6 +818,20 @@ async function main(): Promise<void> {
         } else {
           console.log(`[BatchEntry] ${asset.symbol} (${timeframe}) completed stages: ${result.completed_stages.join(' → ')}`);
         }
+
+        // Persist diagnostics (fire-and-forget) using the batch_id from the result
+        try {
+          const diagnostics = new DiagnosticsCollector(asset.symbol, result.batch_id, supabase);
+          if (diagAccumulator.marketContext) diagnostics.recordMarketContext(diagAccumulator.marketContext);
+          if (diagAccumulator.sentiment) diagnostics.recordSentiment(diagAccumulator.sentiment);
+          if (diagAccumulator.macroContext) diagnostics.recordMacroContext(diagAccumulator.macroContext);
+          if (diagAccumulator.similarity) diagnostics.recordSimilarity(diagAccumulator.similarity);
+          if (diagAccumulator.outcome) diagnostics.recordOutcome(diagAccumulator.outcome);
+          if (diagAccumulator.forecast) diagnostics.recordForecast(diagAccumulator.forecast);
+          if (diagAccumulator.mlService) diagnostics.recordMLService(diagAccumulator.mlService);
+          if (diagAccumulator.gemini) diagnostics.recordGemini(diagAccumulator.gemini);
+          diagnostics.persist().catch(() => {});
+        } catch { /* diagnostics persistence must never affect pipeline */ }
       } catch (error) {
         console.error(`[BatchEntry] ${asset.symbol} (${timeframe}) threw an error:`, error);
         hasFailure = true;

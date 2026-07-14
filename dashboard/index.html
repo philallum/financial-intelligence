@@ -6,485 +6,719 @@
   <title>Financial Intelligence Platform</title>
   <style>
     * { margin: 0; padding: 0; box-sizing: border-box; }
-    body { font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif; background: #0f1419; color: #e7e9ea; padding: 2rem; max-width: 1400px; margin: 0 auto; }
-    h1 { font-size: 1.4rem; margin-bottom: 0.5rem; color: #e7e9ea; font-weight: 500; }
-    .subtitle { font-size: 0.8rem; color: #8b98a5; margin-bottom: 1.5rem; }
+    body { font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif; background: #0f1419; color: #e7e9ea; padding: 1.5rem; max-width: 1400px; margin: 0 auto; }
+    h1 { font-size: 1.4rem; margin-bottom: 0.3rem; color: #e7e9ea; font-weight: 500; }
+    .subtitle { font-size: 0.8rem; color: #8b98a5; margin-bottom: 1rem; }
+    .tabs { display: flex; gap: 0; margin-bottom: 1.2rem; border-bottom: 1px solid #2f3336; }
+    .tab { padding: 0.6rem 1.5rem; cursor: pointer; font-size: 0.85rem; font-weight: 500; color: #8b98a5; border-bottom: 2px solid transparent; transition: all 0.2s; user-select: none; }
+    .tab:hover { color: #e7e9ea; }
+    .tab.active { color: #1d9bf0; border-bottom-color: #1d9bf0; }
+    .tab-content { display: none; }
+    .tab-content.active { display: block; }
     .grid { display: grid; grid-template-columns: 1fr 1fr; gap: 1rem; }
     .grid-full { grid-column: 1 / -1; }
-    @media (max-width: 900px) { .grid { grid-template-columns: 1fr; } }
+    @media (max-width: 900px) { .grid { grid-template-columns: 1fr; } .grid-full { grid-column: 1; } }
     .card { background: #1a1f25; border: 1px solid #2f3336; border-radius: 12px; padding: 1.5rem; }
     .card h2 { font-size: 0.8rem; text-transform: uppercase; letter-spacing: 0.05em; color: #8b98a5; margin-bottom: 1rem; display: flex; align-items: center; gap: 0.5rem; }
     .card h2 .dot { width: 6px; height: 6px; border-radius: 50%; background: #00c853; }
     .card h2 .dot.error { background: #ff1744; }
-    .asset { font-size: 1.8rem; font-weight: 600; margin-bottom: 0.5rem; }
-    .direction { display: flex; gap: 1.5rem; margin: 1rem 0; }
+    .card h2 .dot.warn { background: #ffab00; }
+    .config { margin-bottom: 1rem; display: flex; align-items: center; gap: 0.75rem; flex-wrap: wrap; }
+    .config input { background: #1a1f25; border: 1px solid #2f3336; border-radius: 6px; padding: 0.45rem 0.75rem; color: #e7e9ea; font-size: 0.75rem; width: 260px; }
+    .config button { background: #1d9bf0; color: white; border: none; border-radius: 6px; padding: 0.45rem 1rem; cursor: pointer; font-size: 0.8rem; font-weight: 500; }
+    .config button:hover { background: #1a8cd8; }
+    .refresh-timer { font-size: 0.7rem; color: #8b98a5; }
+    .direction { display: flex; gap: 2rem; margin: 1rem 0; flex-wrap: wrap; }
     .dir-item { text-align: center; }
     .dir-item .label { font-size: 0.7rem; color: #8b98a5; margin-bottom: 0.25rem; }
-    .dir-item .value { font-size: 1.6rem; font-weight: 600; }
+    .dir-item .value { font-size: 2rem; font-weight: 700; }
     .dir-item.up .value { color: #00c853; }
     .dir-item.down .value { color: #ff1744; }
     .dir-item.flat .value { color: #ffab00; }
-    .metrics { display: grid; grid-template-columns: repeat(auto-fit, minmax(120px, 1fr)); gap: 0.75rem; margin-top: 1rem; }
+    .metrics { display: grid; grid-template-columns: repeat(auto-fit, minmax(130px, 1fr)); gap: 0.75rem; margin-top: 1rem; }
     .metric { padding: 0.6rem; background: #0f1419; border-radius: 8px; }
     .metric .label { font-size: 0.65rem; color: #8b98a5; text-transform: uppercase; letter-spacing: 0.03em; }
     .metric .value { font-size: 1rem; font-weight: 500; margin-top: 0.2rem; }
-    .badge { display: inline-block; padding: 0.15rem 0.5rem; border-radius: 4px; font-size: 0.7rem; font-weight: 600; }
+    .badge { display: inline-block; padding: 0.2rem 0.6rem; border-radius: 4px; font-size: 0.7rem; font-weight: 600; }
     .badge-go { background: #00c85320; color: #00c853; }
     .badge-conditional { background: #ffab0020; color: #ffab00; }
-    .badge-no_go { background: #ff174420; color: #ff1744; }
-    .badge-success { background: #00c85320; color: #00c853; }
-    .badge-error { background: #ff174420; color: #ff1744; }
-    .valid-until { font-size: 0.75rem; color: #8b98a5; margin-top: 0.75rem; }
-    .stale-alert { background: #ff174420; border: 1px solid #ff1744; border-radius: 8px; padding: 0.6rem 1rem; margin-top: 0.75rem; display: flex; align-items: center; gap: 0.5rem; }
-    .stale-alert .icon { font-size: 1rem; }
-    .stale-alert .text { font-size: 0.75rem; color: #ff1744; font-weight: 500; }
-    .stale-alert .subtext { font-size: 0.7rem; color: #ff8a80; margin-top: 0.2rem; }
-    .error { color: #ff1744; }
-    #loading { color: #8b98a5; }
-    .config { margin-bottom: 1.5rem; display: flex; align-items: center; gap: 0.75rem; flex-wrap: wrap; }
-    .config input { background: #1a1f25; border: 1px solid #2f3336; border-radius: 6px; padding: 0.5rem 0.75rem; color: #e7e9ea; font-size: 0.8rem; width: 280px; }
-    .config button { background: #1d9bf0; color: white; border: none; border-radius: 6px; padding: 0.5rem 1rem; cursor: pointer; font-size: 0.8rem; }
-    .config button:hover { background: #1a8cd8; }
-    .config .sep { color: #2f3336; }
-
-    /* Similarity table */
+    .badge-no_go, .badge-no-go { background: #ff174420; color: #ff1744; }
+    .stale-alert { background: #ff174420; border: 1px solid #ff174450; border-radius: 8px; padding: 0.6rem 1rem; margin-top: 0.75rem; font-size: 0.75rem; color: #ff8a80; }
+    .countdown { font-size: 0.8rem; color: #8b98a5; margin-top: 0.5rem; }
+    .countdown strong { color: #1d9bf0; }
+    .sparkline-container svg { width: 100%; height: 120px; }
+    .sparkline-info { display: flex; justify-content: space-between; align-items: center; margin-top: 0.5rem; }
+    .sparkline-price { font-size: 1.2rem; font-weight: 600; }
+    .sparkline-change { font-size: 0.85rem; font-weight: 500; }
+    .sparkline-change.up { color: #00c853; }
+    .sparkline-change.down { color: #ff1744; }
+    .bar-chart { display: flex; flex-direction: column; gap: 0.5rem; }
+    .bar-row { display: flex; align-items: center; gap: 0.75rem; }
+    .bar-label { width: 130px; font-size: 0.75rem; color: #8b98a5; text-align: right; flex-shrink: 0; }
+    .bar-track { flex: 1; height: 10px; background: #0f1419; border-radius: 5px; overflow: hidden; }
+    .bar-fill { height: 100%; border-radius: 5px; transition: width 0.3s; }
+    .bar-value { width: 40px; font-size: 0.7rem; color: #e7e9ea; }
+    .event-item { display: flex; align-items: center; gap: 0.75rem; padding: 0.5rem 0; border-bottom: 1px solid #2f333640; font-size: 0.8rem; }
+    .event-item:last-child { border-bottom: none; }
+    .impact-badge { padding: 0.15rem 0.5rem; border-radius: 3px; font-size: 0.65rem; font-weight: 600; text-transform: uppercase; }
+    .impact-high { background: #ff174430; color: #ff1744; }
+    .impact-medium { background: #ffab0030; color: #ffab00; }
+    .impact-low { background: #8b98a530; color: #8b98a5; }
+    .event-warning { background: #ff174415; border: 1px solid #ff174440; border-radius: 8px; padding: 0.6rem 1rem; margin-bottom: 0.75rem; font-size: 0.75rem; color: #ff8a80; }
+    .news-item { display: flex; align-items: center; gap: 0.75rem; padding: 0.5rem 0.5rem; border-bottom: 1px solid #2f333620; font-size: 0.78rem; }
+    .news-item:last-child { border-bottom: none; }
+    .news-item:hover { background: #0f1419; border-radius: 6px; }
+    .sentiment-badge { min-width: 36px; text-align: center; padding: 0.15rem 0.4rem; border-radius: 4px; font-size: 0.7rem; font-weight: 600; }
+    .news-meta { font-size: 0.65rem; color: #8b98a5; white-space: nowrap; }
+    .history-list { display: flex; flex-direction: column; gap: 0.4rem; }
+    .history-item-ext { display: flex; align-items: center; padding: 0.5rem 0.6rem; background: #0f1419; border-radius: 6px; font-size: 0.75rem; }
+    .history-item-ext .pred-col { display: flex; align-items: center; gap: 0.75rem; flex: 1; flex-wrap: wrap; }
+    .history-item-ext .pred-col .time { width: 110px; color: #8b98a5; }
+    .history-item-ext .pred-col .dir span { padding: 0.1rem 0.4rem; border-radius: 3px; font-size: 0.7rem; font-weight: 600; }
+    .history-item-ext .pred-col .move { width: 65px; text-align: right; }
+    .history-item-ext .pred-col .conf { width: 45px; text-align: right; color: #8b98a5; }
+    .history-item-ext .outcome-col { width: 170px; display: flex; align-items: center; gap: 0.5rem; justify-content: flex-end; }
+    .accuracy-badge { display: inline-block; padding: 0.3rem 0.8rem; border-radius: 6px; font-size: 0.8rem; font-weight: 600; margin-bottom: 0.75rem; }
+    .health-grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(180px, 1fr)); gap: 0.75rem; }
+    .health-card { background: #0f1419; border-radius: 8px; padding: 0.8rem; border: 1px solid #2f3336; }
+    .health-card .hc-title { font-size: 0.7rem; color: #8b98a5; text-transform: uppercase; letter-spacing: 0.03em; margin-bottom: 0.4rem; }
+    .health-card .hc-status { display: flex; align-items: center; gap: 0.4rem; font-size: 0.85rem; font-weight: 500; }
+    .health-card .hc-detail { font-size: 0.7rem; color: #8b98a5; margin-top: 0.3rem; }
+    .status-dot { width: 8px; height: 8px; border-radius: 50%; display: inline-block; }
+    .status-dot.green { background: #00c853; }
+    .status-dot.red { background: #ff1744; }
+    .status-dot.yellow { background: #ffab00; }
+    .alert-bar { background: #ff174415; border: 1px solid #ff174440; border-radius: 8px; padding: 0.6rem 1rem; margin-top: 0.75rem; font-size: 0.75rem; color: #ff8a80; }
+    .pipeline-stages { display: flex; align-items: center; gap: 0.3rem; flex-wrap: wrap; margin: 0.75rem 0; }
+    .pipeline-stage { padding: 0.25rem 0.6rem; border-radius: 4px; font-size: 0.7rem; font-weight: 500; background: #00c85320; color: #00c853; border: 1px solid #00c85340; }
+    .pipeline-stage.failed { background: #ff174420; color: #ff1744; border-color: #ff174440; }
+    .pipeline-stage.pending { background: #2f3336; color: #8b98a5; border-color: #2f3336; }
+    .pipeline-arrow { color: #2f3336; font-size: 0.7rem; }
+    .trace-timeline { display: flex; flex-direction: column; gap: 0.4rem; }
+    .trace-item { display: flex; align-items: center; gap: 0.75rem; padding: 0.4rem 0.6rem; background: #0f1419; border-radius: 6px; font-size: 0.75rem; }
+    .trace-item.error-trace { border-left: 2px solid #ff1744; }
+    .trace-item .name { width: 140px; font-weight: 500; }
+    .trace-item .version { color: #8b98a5; width: 50px; }
+    .trace-item .duration-bar { flex: 1; height: 6px; background: #2f3336; border-radius: 3px; }
+    .trace-item .duration-fill { height: 100%; border-radius: 3px; background: #1d9bf0; }
+    .trace-item .duration-fill.error-fill { background: #ff1744; }
+    .trace-item .duration-label { width: 60px; text-align: right; color: #8b98a5; font-size: 0.7rem; }
+    .trace-item .trace-status { width: 6px; height: 6px; border-radius: 50%; flex-shrink: 0; }
+    .trace-item .trace-status.success { background: #00c853; }
+    .trace-item .trace-status.error { background: #ff1744; }
     .sim-table { width: 100%; border-collapse: collapse; font-size: 0.75rem; }
     .sim-table th { text-align: left; color: #8b98a5; font-weight: 500; padding: 0.4rem 0.6rem; border-bottom: 1px solid #2f3336; text-transform: uppercase; font-size: 0.65rem; letter-spacing: 0.03em; }
     .sim-table td { padding: 0.4rem 0.6rem; border-bottom: 1px solid #1a1f25; }
     .sim-table tr:hover td { background: #0f1419; }
-    .score-bar { height: 4px; border-radius: 2px; background: #2f3336; position: relative; width: 60px; display: inline-block; vertical-align: middle; }
-    .score-bar-fill { height: 100%; border-radius: 2px; background: #1d9bf0; }
-    .layer-scores { display: flex; gap: 0.3rem; }
-    .layer-dot { width: 8px; height: 8px; border-radius: 2px; display: inline-block; }
-
-    /* Trace timeline */
-    .trace-timeline { display: flex; flex-direction: column; gap: 0.4rem; }
-    .trace-item { display: flex; align-items: center; gap: 0.75rem; padding: 0.4rem 0.6rem; background: #0f1419; border-radius: 6px; font-size: 0.75rem; }
-    .trace-item .name { width: 120px; font-weight: 500; }
-    .trace-item .version { color: #8b98a5; width: 50px; }
-    .trace-item .duration-bar { flex: 1; height: 6px; background: #2f3336; border-radius: 3px; position: relative; }
-    .trace-item .duration-fill { height: 100%; border-radius: 3px; background: #1d9bf0; }
-    .trace-item .duration-label { width: 55px; text-align: right; color: #8b98a5; font-size: 0.7rem; }
-    .trace-item .status-dot { width: 6px; height: 6px; border-radius: 50%; }
-    .trace-item .status-dot.success { background: #00c853; }
-    .trace-item .status-dot.error { background: #ff1744; }
-
-    /* Regime card */
-    .regime-tags { display: flex; flex-wrap: wrap; gap: 0.5rem; margin-top: 0.5rem; }
-    .regime-tag { padding: 0.3rem 0.7rem; background: #0f1419; border: 1px solid #2f3336; border-radius: 6px; font-size: 0.75rem; }
-    .regime-tag.active { border-color: #1d9bf0; color: #1d9bf0; }
-
-    /* Research archive history */
-    .history-list { display: flex; flex-direction: column; gap: 0.5rem; }
-    .history-header { display: flex; justify-content: space-between; padding: 0 0.6rem 0.3rem; border-bottom: 1px solid #2f3336; margin-bottom: 0.3rem; }
-    .history-header span { font-size: 0.65rem; text-transform: uppercase; letter-spacing: 0.03em; color: #8b98a5; }
-    .hdr-pred { flex: 1; }
-    .hdr-out { width: 170px; text-align: right; }
-    .history-item { display: flex; align-items: center; gap: 1rem; padding: 0.5rem 0.6rem; background: #0f1419; border-radius: 6px; font-size: 0.75rem; }
-    .history-item .time { width: 130px; color: #8b98a5; }
-    .history-item .dir { display: flex; gap: 0.4rem; }
-    .history-item .dir span { padding: 0.1rem 0.4rem; border-radius: 3px; font-size: 0.7rem; font-weight: 600; }
-    .history-item .move { width: 70px; text-align: right; }
-    .history-item .conf { width: 50px; text-align: right; color: #8b98a5; }
-    .history-item-extended { display: flex; align-items: center; padding: 0.5rem 0.6rem; background: #0f1419; border-radius: 6px; font-size: 0.75rem; }
-    .history-item-extended .prediction-col { display: flex; align-items: center; gap: 0.75rem; flex: 1; }
-    .history-item-extended .prediction-col .time { width: 110px; color: #8b98a5; }
-    .history-item-extended .prediction-col .dir span { padding: 0.1rem 0.4rem; border-radius: 3px; font-size: 0.7rem; font-weight: 600; }
-    .history-item-extended .prediction-col .move { width: 65px; text-align: right; }
-    .history-item-extended .prediction-col .conf { width: 45px; text-align: right; color: #8b98a5; }
-    .history-item-extended .outcome-col { width: 170px; display: flex; align-items: center; gap: 0.5rem; justify-content: flex-end; }
-    .outcome-badge { padding: 0.15rem 0.4rem; border-radius: 3px; font-size: 0.7rem; font-weight: 600; }
-    .outcome-error { font-size: 0.65rem; color: #8b98a5; }
-    .outcome-pending { font-size: 0.65rem; color: #556270; font-style: italic; }
+    .error-item { padding: 0.5rem 0.6rem; background: #0f1419; border-radius: 6px; font-size: 0.75rem; margin-bottom: 0.4rem; border-left: 2px solid #ff1744; }
+    .error-item .err-engine { font-weight: 500; color: #ff8a80; }
+    .error-item .err-detail { color: #8b98a5; margin-top: 0.2rem; font-size: 0.7rem; word-break: break-word; }
+    .error-item .err-time { color: #556270; font-size: 0.65rem; margin-top: 0.15rem; }
+    .no-data { color: #8b98a5; font-size: 0.8rem; font-style: italic; }
   </style>
 </head>
 <body>
   <h1>Financial Intelligence Platform</h1>
-  <div class="subtitle">Deterministic Financial Research · EUR/USD · Next 4 Hours</div>
+  <div class="subtitle">EUR/USD · Deterministic Financial Research · Next 4 Hours</div>
 
   <div class="config">
     <input id="api-url" type="text" placeholder="API URL" value="https://financial-intelligence-api-517029156879.europe-west1.run.app">
-    <span class="sep">|</span>
     <input id="supabase-url" type="text" placeholder="Supabase URL" value="https://vzfamclwlbxonabvhcve.supabase.co">
-    <button onclick="refreshAll()">Refresh All</button>
+    <button onclick="refreshAll()">Refresh</button>
+    <span class="refresh-timer" id="refresh-timer"></span>
   </div>
 
-  <div class="grid" id="content">
-    <p id="loading">Loading...</p>
+  <div class="tabs">
+    <div class="tab active" data-tab="trader" onclick="switchTab('trader')">Trader View</div>
+    <div class="tab" data-tab="developer" onclick="switchTab('developer')">Developer View</div>
+  </div>
+
+  <div class="tab-content active" id="tab-trader">
+    <div class="grid" id="trader-content">
+      <p class="grid-full" style="color:#8b98a5">Loading...</p>
+    </div>
+  </div>
+  <div class="tab-content" id="tab-developer">
+    <div class="grid" id="developer-content">
+      <p class="grid-full" style="color:#8b98a5">Loading...</p>
+    </div>
   </div>
 
   <script>
-    // Supabase anon key (publishable, safe to expose in client code — RLS enforced)
     const SUPABASE_ANON_KEY = 'sb_publishable_LpljDfNLU5cmIjFB2mu-gg_Ve5S6zkL';
+    let refreshCountdown = 60;
+
+    function switchTab(tab) {
+      document.querySelectorAll('.tab').forEach(t => t.classList.remove('active'));
+      document.querySelectorAll('.tab-content').forEach(t => t.classList.remove('active'));
+      document.querySelector(`.tab[data-tab="${tab}"]`).classList.add('active');
+      document.getElementById(`tab-${tab}`).classList.add('active');
+      refreshAll();
+    }
+
+    function getApiUrl() { return document.getElementById('api-url').value.replace(/\/$/, ''); }
+    function getSupabaseUrl() { return document.getElementById('supabase-url').value.replace(/\/$/, ''); }
 
     async function supabaseQuery(table, params = '') {
-      const baseUrl = document.getElementById('supabase-url').value.replace(/\/$/, '');
-      const url = `${baseUrl}/rest/v1/${table}?${params}`;
+      const url = `${getSupabaseUrl()}/rest/v1/${table}?${params}`;
       const res = await fetch(url, {
-        headers: {
-          'apikey': SUPABASE_ANON_KEY,
-          'Authorization': `Bearer ${SUPABASE_ANON_KEY}`,
-        }
+        headers: { 'apikey': SUPABASE_ANON_KEY, 'Authorization': `Bearer ${SUPABASE_ANON_KEY}` }
       });
+      if (!res.ok) throw new Error(`Supabase ${table}: ${res.status}`);
       return res.json();
     }
 
-    async function refreshAll() {
-      const content = document.getElementById('content');
-      content.innerHTML = '<p id="loading" class="grid-full">Loading...</p>';
-
-      try {
-        const [forecast, researchForecasts, similarity, traces, recentCandles] = await Promise.all([
-          fetchForecastData(),
-          supabaseQuery('research_forecasts', 'select=id,fingerprint_id,asset,confidence_final,sample_size,created_at,direction_probabilities,expected_move_pips,regime,engine_versions,forecast_expiry&order=created_at.desc&limit=10'),
-          supabaseQuery('research_similarity_archive', 'select=match_fingerprint_id,similarity_score,rank,layer_breakdown,match_explanation&order=rank.asc&limit=10'),
-          supabaseQuery('execution_traces', 'select=engine_name,engine_version,status,execution_time_ms,timestamp_utc&order=timestamp_utc.desc&limit=12'),
-          supabaseQuery('raw_candles', 'select=timestamp_utc,close&asset=eq.EURUSD&timeframe=eq.4H&order=timestamp_utc.desc&limit=20'),
-        ]);
-
-        let html = '';
-
-        // 1. Current Forecast Card
-        html += renderForecastCard(forecast);
-
-        // 2. Regime & Pipeline State
-        html += renderRegimeCard(researchForecasts[0], traces);
-
-        // 3. Pipeline Execution Traces
-        html += renderTracesCard(traces);
-
-        // 4. Top Similarity Matches
-        html += renderSimilarityCard(similarity);
-
-        // 5. Research Archive History (with actual outcomes from candles)
-        html += renderHistoryCard(researchForecasts, recentCandles);
-
-        content.innerHTML = html;
-      } catch (err) {
-        content.innerHTML = `<div class="card grid-full"><p class="error">Failed to load: ${err.message}</p></div>`;
-      }
-    }
-
-    async function fetchForecastData() {
-      const baseUrl = document.getElementById('api-url').value.replace(/\/$/, '');
-      const res = await fetch(`${baseUrl}/v1/forecast/EURUSD`);
+    async function fetchForecast() {
+      const res = await fetch(`${getApiUrl()}/v1/forecast/EURUSD`);
       if (!res.ok) throw new Error('API returned ' + res.status);
       const json = await res.json();
-      // API returns wrapped envelope {data: {...}, meta: {...}} for anonymous requests
-      // Unwrap to get the forecast data directly
       return json.data || json;
     }
 
-    function renderForecastCard(data) {
+    function timeAgo(dateStr) {
+      if (!dateStr) return '';
+      const diff = Date.now() - new Date(dateStr).getTime();
+      const mins = Math.floor(diff / 60000);
+      if (mins < 1) return 'just now';
+      if (mins < 60) return `${mins}m ago`;
+      const hrs = Math.floor(mins / 60);
+      if (hrs < 24) return `${hrs}h ${mins % 60}m ago`;
+      return `${Math.floor(hrs / 24)}d ago`;
+    }
+
+    function hoursUntil(dateStr) {
+      const diff = new Date(dateStr).getTime() - Date.now();
+      if (diff < 0) return 'passed';
+      const hrs = Math.floor(diff / 3600000);
+      const mins = Math.floor((diff % 3600000) / 60000);
+      return hrs > 0 ? `${hrs}h ${mins}m` : `${mins}m`;
+    }
+
+    function sentimentColor(score) {
+      if (score > 0.3) return '#00c853';
+      if (score > 0.1) return '#66bb6a';
+      if (score < -0.3) return '#ff1744';
+      if (score < -0.1) return '#ef5350';
+      return '#8b98a5';
+    }
+
+    function sentimentBg(score) {
+      const c = sentimentColor(score);
+      return `background:${c}20;color:${c}`;
+    }
+
+    // ─── TRADER VIEW ───────────────────────────────────────
+    function renderPredictionCard(data) {
       const dp = data.direction_probabilities;
-      const label = data.tradeability_label || 'NO_GO';
-      const badgeClass = `badge-${label.toLowerCase()}`;
-      const badgeText = label === 'GO' ? 'Good to Trade' : label === 'CONDITIONAL' ? 'Trade with Caution' : "Don't Trade Now";
-      const dominant = dp.up >= dp.down && dp.up >= dp.flat ? 'UP' : dp.down >= dp.flat ? 'DOWN' : 'FLAT';
-      const dominantText = dominant === 'UP' ? 'Price Goes Up' : dominant === 'DOWN' ? 'Price Goes Down' : 'Price Stays Flat';
-
-      return `
-        <div class="card">
-          <h2><span class="dot"></span>Current Prediction</h2>
-          <div class="asset">EUR/USD <span style="font-size:0.8rem;color:#8b98a5;font-weight:400">· Next 4 Hours</span></div>
-          <div class="direction">
-            <div class="dir-item up">
-              <div class="label">Price Goes Up</div>
-              <div class="value">${(dp.up * 100).toFixed(0)}%</div>
-            </div>
-            <div class="dir-item down">
-              <div class="label">Price Goes Down</div>
-              <div class="value">${(dp.down * 100).toFixed(0)}%</div>
-            </div>
-            <div class="dir-item flat">
-              <div class="label">Price Stays Flat</div>
-              <div class="value">${(dp.flat * 100).toFixed(0)}%</div>
-            </div>
-          </div>
-          <div class="metrics">
-            <div class="metric">
-              <div class="label">Predicted Price Change</div>
-              <div class="value">${data.expected_move_pips > 0 ? '+' : ''}${data.expected_move_pips} points</div>
-            </div>
-            <div class="metric">
-              <div class="label">How Sure We Are</div>
-              <div class="value">${(data.confidence_final * 100).toFixed(1)}%</div>
-            </div>
-            <div class="metric">
-              <div class="label">Should You Act?</div>
-              <div class="value"><span class="badge ${badgeClass}">${badgeText}</span></div>
-            </div>
-            <div class="metric">
-              <div class="label">Most Likely Direction</div>
-              <div class="value">${dominantText}</div>
-            </div>
-          </div>
-          <div class="valid-until">Prediction expires: ${new Date(data.forecast_valid_until).toLocaleString()} &middot; Trading Cost: ${data.execution_metrics?.spread_penalty || '\u2014'} &middot; Market Hours: ${data.execution_metrics?.session_alignment || '\u2014'}</div>
-          ${renderStalenessAlert(data.forecast_valid_until)}
-        </div>
-      `;
-    }
-
-    function renderStalenessAlert(forecastValidUntil) {
-      if (!forecastValidUntil) return '';
-      const expiresAt = new Date(forecastValidUntil);
+      const label = (data.tradeability_label || 'NO_GO').toUpperCase();
+      const badgeClass = `badge-${label.toLowerCase().replace('_', '-')}`;
       const now = new Date();
-      if (now <= expiresAt) return '';
+      const expiry = data.forecast_valid_until ? new Date(data.forecast_valid_until) : null;
+      const isStale = expiry && now > expiry;
 
-      const overdueMs = now.getTime() - expiresAt.getTime();
-      const overdueMin = Math.floor(overdueMs / 60000);
-      const overdueHrs = Math.floor(overdueMin / 60);
-      const overdueText = overdueHrs > 0
-        ? `${overdueHrs}h ${overdueMin % 60}m overdue`
-        : `${overdueMin}m overdue`;
+      let countdownHtml = '';
+      if (expiry && !isStale) {
+        const diff = expiry.getTime() - now.getTime();
+        const hrs = Math.floor(diff / 3600000);
+        const mins = Math.floor((diff % 3600000) / 60000);
+        countdownHtml = `<div class="countdown">Next prediction in: <strong>${hrs}h ${mins}m</strong></div>`;
+      }
 
-      return `
-        <div class="stale-alert">
-          <span class="icon">\u26A0\uFE0F</span>
-          <div>
-            <div class="text">Prediction is stale &mdash; batch pipeline may have missed a run (${overdueText})</div>
-            <div class="subtext">Expected refresh at ${expiresAt.toLocaleTimeString()}. Check Cloud Scheduler logs for fip-batch-trigger jobs.</div>
-          </div>
+      let staleHtml = '';
+      if (isStale) {
+        const overdueMin = Math.floor((now.getTime() - expiry.getTime()) / 60000);
+        staleHtml = `<div class="stale-alert">⚠️ Prediction is stale — expired ${overdueMin}m ago. Batch pipeline may have missed a run.</div>`;
+      }
+
+      return `<div class="card grid-full">
+        <h2><span class="dot ${isStale ? 'error' : ''}"></span>Current Prediction</h2>
+        <div class="direction">
+          <div class="dir-item up"><div class="label">UP</div><div class="value">${(dp.up * 100).toFixed(1)}%</div></div>
+          <div class="dir-item down"><div class="label">DOWN</div><div class="value">${(dp.down * 100).toFixed(1)}%</div></div>
+          <div class="dir-item flat"><div class="label">FLAT</div><div class="value">${(dp.flat * 100).toFixed(1)}%</div></div>
         </div>
-      `;
+        <div class="metrics">
+          <div class="metric"><div class="label">Expected Move</div><div class="value">${data.expected_move_pips > 0 ? '+' : ''}${data.expected_move_pips} pips</div></div>
+          <div class="metric"><div class="label">Confidence</div><div class="value">${(data.confidence_final * 100).toFixed(1)}%</div></div>
+          <div class="metric"><div class="label">Tradeability</div><div class="value"><span class="badge ${badgeClass}">${label.replace('_', ' ')}</span></div></div>
+        </div>
+        ${countdownHtml}${staleHtml}
+      </div>`;
     }
 
-    function renderRegimeCard(latestResearch, traces) {
-      if (!latestResearch) return '<div class="card"><h2>Current Market Conditions & System Health</h2><p style="color:#8b98a5;font-size:0.8rem">No research data yet</p></div>';
-
-      const regime = latestResearch.regime || {};
-      const ev = latestResearch.engine_versions || {};
-      const successCount = traces.filter(t => t.status === 'success').length;
-      const errorCount = traces.filter(t => t.status === 'error').length;
-      const totalMs = traces.filter(t => t.status === 'success').reduce((sum, t) => sum + t.execution_time_ms, 0);
-
-      const volLabel = (regime.volatility_regime || '—').toLowerCase();
-      const volText = volLabel === 'low' ? 'Calm Market' : volLabel === 'high' ? 'Volatile Market' : 'Normal Market';
-      const trendLabel = (regime.trend_regime || '—').toLowerCase();
-      const trendText = trendLabel === 'bullish' ? 'Prices Rising' : trendLabel === 'bearish' ? 'Prices Falling' : 'Prices Ranging';
-      const sessionLabel = (regime.session || '—').toLowerCase();
-      const sessionText = sessionLabel === 'london' ? 'London Trading Hours' : sessionLabel === 'ny' ? 'New York Trading Hours' : sessionLabel === 'asia' ? 'Asia Trading Hours' : regime.session || '—';
-
-      return `
-        <div class="card">
-          <h2><span class="dot ${errorCount > 0 ? 'error' : ''}"></span>Current Market Conditions & System Health</h2>
-          <div class="regime-tags">
-            <div class="regime-tag active">${volText}</div>
-            <div class="regime-tag active">${trendText}</div>
-            <div class="regime-tag active">${sessionText}</div>
-          </div>
-          <div class="metrics" style="margin-top:1rem">
-            <div class="metric">
-              <div class="label">Data Points Used</div>
-              <div class="value">${latestResearch.sample_size}</div>
-            </div>
-            <div class="metric">
-              <div class="label">System Steps Completed</div>
-              <div class="value">${successCount} of ${successCount + errorCount} succeeded</div>
-            </div>
-            <div class="metric">
-              <div class="label">Processing Time</div>
-              <div class="value">${totalMs}ms</div>
-            </div>
-            <div class="metric">
-              <div class="label">Pattern Matcher Version</div>
-              <div class="value">v${ev.fingerprint || '—'}</div>
-            </div>
-          </div>
+    function renderSparkline(candles) {
+      if (!candles || candles.length < 2) return '<div class="card grid-full"><h2>Price Sparkline</h2><p class="no-data">No candle data available</p></div>';
+      const sorted = [...candles].sort((a, b) => new Date(a.timestamp_utc) - new Date(b.timestamp_utc));
+      const closes = sorted.map(c => c.close);
+      const min = Math.min(...closes);
+      const max = Math.max(...closes);
+      const range = max - min || 0.0001;
+      const w = 800, h = 100, pad = 5;
+      const points = closes.map((v, i) => {
+        const x = pad + (i / (closes.length - 1)) * (w - 2 * pad);
+        const y = h - pad - ((v - min) / range) * (h - 2 * pad);
+        return `${x.toFixed(1)},${y.toFixed(1)}`;
+      }).join(' ');
+      const lastPt = points.split(' ').pop().split(',');
+      const currentPrice = closes[closes.length - 1];
+      const changePips = ((currentPrice - closes[0]) / 0.0001).toFixed(1);
+      const changeClass = changePips >= 0 ? 'up' : 'down';
+      const changeSign = changePips >= 0 ? '+' : '';
+      return `<div class="card grid-full">
+        <h2>Price Sparkline (Last ${closes.length} Candles)</h2>
+        <svg viewBox="0 0 ${w} ${h}" preserveAspectRatio="none" style="width:100%;height:120px">
+          <polyline points="${points}" fill="none" stroke="#1d9bf0" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"/>
+          <circle cx="${lastPt[0]}" cy="${lastPt[1]}" r="4" fill="#1d9bf0"/>
+        </svg>
+        <div class="sparkline-info">
+          <span class="sparkline-price">${currentPrice.toFixed(5)}</span>
+          <span class="sparkline-change ${changeClass}">${changeSign}${changePips} pips</span>
         </div>
-      `;
+      </div>`;
     }
 
-    function renderTracesCard(traces) {
-      // Only show the most recent successful batch traces
-      const recentSuccess = traces.filter(t => t.status === 'success').slice(0, 11);
-      if (recentSuccess.length === 0) return '<div class="card grid-full"><h2>System Processing Steps</h2><p style="color:#8b98a5;font-size:0.8rem">No traces yet</p></div>';
+    function renderSentimentCard(articles, events) {
+      // Compute sentiment from actual article scores
+      const scoredArticles = (articles || []).filter(a => a.sentiment_hint !== null && a.sentiment_hint !== 0);
+      const allArticles = articles || [];
+      
+      // Aggregate sentiment: average of non-zero sentiment_hints
+      let aggSentiment = 0;
+      let bullish = 0;
+      let bearish = 0;
+      
+      if (scoredArticles.length > 0) {
+        aggSentiment = scoredArticles.reduce((sum, a) => sum + (a.sentiment_hint || 0), 0) / scoredArticles.length;
+        bullish = scoredArticles.filter(a => a.sentiment_hint > 0.2).length / allArticles.length;
+        bearish = scoredArticles.filter(a => a.sentiment_hint < -0.2).length / allArticles.length;
+      }
 
-      const maxMs = Math.max(...recentSuccess.map(t => t.execution_time_ms), 1);
+      // Event proximity from upcoming events
+      const upcomingHigh = (events || []).filter(e => {
+        const hrs = (new Date(e.event_date).getTime() - Date.now()) / 3600000;
+        return (e.impact || '').toUpperCase() === 'HIGH' && hrs > 0 && hrs < 24;
+      });
+      const eventProx = upcomingHigh.length > 0 ? Math.min(1 - ((new Date(upcomingHigh[0].event_date).getTime() - Date.now()) / (24 * 3600000)), 1) : 0;
 
-      const engineNameMap = {
-        'confidence-engine': 'Confidence Calculator',
-        'confidence-engine-v2': 'Confidence Calculator v2',
-        'regime-engine': 'Market Conditions',
-        'regime-engine-v2': 'Market Conditions v2',
-        'fingerprint-engine': 'Pattern Matcher',
-        'similarity-engine': 'Similar Situations Finder',
-        'forecast-engine': 'Prediction Generator',
-        'topology-engine': 'Market Structure',
-        'tradeability-engine': 'Trade Readiness',
-        'outcome-engine': 'Outcome Tracker',
-      };
+      let summary = 'Neutral — no clear signal from news';
+      if (aggSentiment < -0.3) summary = '📉 Strong bearish sentiment from news';
+      else if (aggSentiment < -0.1) summary = '📉 Mild bearish sentiment from news';
+      else if (aggSentiment > 0.3) summary = '📈 Strong bullish sentiment from news';
+      else if (aggSentiment > 0.1) summary = '📈 Mild bullish sentiment from news';
+      
+      if (allArticles.length === 0) summary = 'No news articles available';
 
-      const items = recentSuccess.reverse().map(t => {
-        const friendlyName = engineNameMap[t.engine_name] || t.engine_name;
-        return `
-          <div class="trace-item">
-            <div class="status-dot ${t.status}"></div>
-            <div class="name">${friendlyName}</div>
-            <div class="version">v${t.engine_version}</div>
-            <div class="duration-bar"><div class="duration-fill" style="width:${(t.execution_time_ms / maxMs * 100).toFixed(0)}%"></div></div>
-            <div class="duration-label">${t.execution_time_ms}ms</div>
-          </div>
-        `;
+      const bar = (label, value, color) => `<div class="bar-row">
+        <span class="bar-label">${label}</span>
+        <div class="bar-track"><div class="bar-fill" style="width:${Math.min(Math.abs(value) * 100, 100)}%;background:${color}"></div></div>
+        <span class="bar-value">${(value * 100).toFixed(0)}%</span>
+      </div>`;
+
+      return `<div class="card">
+        <h2>What's Driving This Prediction</h2>
+        <div class="bar-chart">
+          ${bar('Aggregate Sentiment', aggSentiment, aggSentiment >= 0 ? '#00c853' : '#ff1744')}
+          ${bar('Bullish Pressure', bullish, '#00c853')}
+          ${bar('Bearish Pressure', bearish, '#ff1744')}
+          ${bar('Event Proximity', eventProx, '#ffab00')}
+        </div>
+        <div style="margin-top:0.75rem;padding:0.5rem;background:#0f1419;border-radius:6px;display:flex;gap:1rem">
+          <div><span style="font-size:0.7rem;color:#8b98a5">Articles:</span> <span style="font-size:0.8rem;font-weight:500">${allArticles.length}</span></div>
+          <div><span style="font-size:0.7rem;color:#8b98a5">Scored:</span> <span style="font-size:0.8rem;font-weight:500">${scoredArticles.length}</span></div>
+          <div><span style="font-size:0.7rem;color:#8b98a5">High Events:</span> <span style="font-size:0.8rem;font-weight:500;color:${upcomingHigh.length > 0 ? '#ff1744' : '#8b98a5'}">${upcomingHigh.length}</span></div>
+        </div>
+        <div style="margin-top:0.5rem;font-size:0.8rem;font-weight:500">${summary}</div>
+      </div>`;
+    }
+
+    function renderEventsCard(events) {
+      if (!events || events.length === 0) return '<div class="card"><h2>Economic Events</h2><p class="no-data">No events in database. Run the integrity job to fetch calendar data.</p></div>';
+      
+      const now = Date.now();
+      const upcoming = events.filter(e => new Date(e.event_date).getTime() > now).sort((a, b) => new Date(a.event_date) - new Date(b.event_date));
+      const recent = events.filter(e => new Date(e.event_date).getTime() <= now).sort((a, b) => new Date(b.event_date) - new Date(a.event_date));
+      
+      let warningHtml = '';
+      const highSoon = upcoming.find(e => {
+        const hrs = (new Date(e.event_date).getTime() - now) / 3600000;
+        return (e.impact || '').toUpperCase() === 'HIGH' && hrs < 8;
+      });
+      if (highSoon) warningHtml = `<div class="event-warning">⚠️ Trading blocked — ${highSoon.name} in ${hoursUntil(highSoon.event_date)}</div>`;
+      
+      const renderItems = (list, labelFn) => list.map(e => {
+        const imp = (e.impact || 'LOW').toUpperCase();
+        return `<div class="event-item">
+          <span class="impact-badge impact-${imp.toLowerCase()}">${imp}</span>
+          <span style="flex:1">${e.name}</span>
+          <span style="font-size:0.7rem;color:#8b98a5">${e.currency || ''}</span>
+          <span style="font-size:0.7rem;color:#8b98a5;min-width:55px;text-align:right">${labelFn(e)}</span>
+        </div>`;
       }).join('');
 
-      return `
-        <div class="card grid-full">
-          <h2>System Processing Steps</h2>
-          <div class="trace-timeline">${items}</div>
-        </div>
-      `;
+      let contentHtml = warningHtml;
+      if (upcoming.length > 0) {
+        contentHtml += `<div style="font-size:0.7rem;color:#1d9bf0;margin-bottom:0.3rem;font-weight:500">UPCOMING</div>`;
+        contentHtml += renderItems(upcoming.slice(0, 5), e => hoursUntil(e.event_date));
+      }
+      if (recent.length > 0) {
+        contentHtml += `<div style="font-size:0.7rem;color:#8b98a5;margin:0.5rem 0 0.3rem;font-weight:500">RECENT</div>`;
+        contentHtml += renderItems(recent.slice(0, 3), e => timeAgo(e.event_date));
+      }
+      
+      return `<div class="card"><h2>Economic Events</h2>${contentHtml}</div>`;
     }
 
-    function renderSimilarityCard(matches) {
-      if (!matches || matches.length === 0) return '<div class="card grid-full"><h2>Most Similar Past Situations</h2><p style="color:#8b98a5;font-size:0.8rem">No matches yet</p></div>';
-
-      const rows = matches.map(m => {
-        const lb = m.layer_breakdown;
-        const score = (m.similarity_score * 100).toFixed(2);
-        const layers = ['market_structure', 'volatility', 'liquidity', 'macro', 'sentiment'];
-        const layerNames = ['Structure', 'Volatility', 'Liquidity', 'Economy', 'Sentiment'];
-        const layerBars = layers.map((l, i) => {
-          const v = lb[l] || 0;
-          const color = v > 0.9 ? '#00c853' : v > 0.7 ? '#ffab00' : '#ff1744';
-          return `<span title="${layerNames[i]}: ${(v*100).toFixed(1)}%" style="display:inline-block;width:24px;height:8px;background:#2f3336;border-radius:2px;position:relative;overflow:hidden"><span style="position:absolute;left:0;top:0;height:100%;width:${(v*100).toFixed(0)}%;background:${color};border-radius:2px"></span></span>`;
-        }).join('');
-
-        const reason = m.match_explanation?.primary_match_reason || '—';
-        const matched = (m.match_explanation?.matched_layers || []).join(', ') || '—';
-
-        return `
-          <tr>
-            <td style="color:#8b98a5">#${m.rank}</td>
-            <td style="font-family:monospace;font-size:0.65rem;color:#8b98a5">${m.match_fingerprint_id.slice(0, 12)}…</td>
-            <td><strong>${score}%</strong></td>
-            <td>${layerBars}</td>
-            <td style="color:#8b98a5;font-size:0.7rem">${matched}</td>
-          </tr>
-        `;
+    function renderNewsCard(articles) {
+      if (!articles || articles.length === 0) return '<div class="card grid-full"><h2>Recent News</h2><p class="no-data">No news articles</p></div>';
+      const items = articles.map(a => {
+        const score = a.sentiment_hint ?? 0;
+        const rel = a.relevance_score ? `${(a.relevance_score * 100).toFixed(0)}%` : '';
+        return `<div class="news-item">
+          <span class="sentiment-badge" style="${sentimentBg(score)}">${score >= 0 ? '+' : ''}${score.toFixed(2)}</span>
+          <span style="flex:1">${a.headline || a.title || 'Untitled'}</span>
+          <span class="news-meta">${rel ? rel + ' · ' : ''}${timeAgo(a.published_at)}</span>
+        </div>`;
       }).join('');
-
-      return `
-        <div class="card grid-full">
-          <h2>Most Similar Past Situations <span style="font-size:0.7rem;color:#8b98a5;text-transform:none;letter-spacing:0;font-weight:400">(${matches.length} of 50 shown)</span></h2>
-          <table class="sim-table">
-            <thead>
-              <tr><th>Rank</th><th>Pattern ID</th><th>How Similar (%)</th><th>Structure · Volatility · Liquidity · Economy · Sentiment</th><th>What Matched</th></tr>
-            </thead>
-            <tbody>${rows}</tbody>
-          </table>
-        </div>
-      `;
+      return `<div class="card grid-full"><h2>Recent News</h2>${items}</div>`;
     }
 
     function renderHistoryCard(forecasts, candles) {
-      if (!forecasts || forecasts.length === 0) return '<div class="card"><h2>Prediction History</h2><p style="color:#8b98a5;font-size:0.8rem">No archived predictions yet</p></div>';
-
-      // Build candle lookup: timestamp → close price
+      if (!forecasts || forecasts.length === 0) return '<div class="card grid-full"><h2>Prediction History + Accuracy</h2><p class="no-data">No archived predictions</p></div>';
       const candleMap = new Map();
       if (candles && Array.isArray(candles)) {
-        for (const c of candles) {
-          // Normalize to ISO string for matching
-          candleMap.set(new Date(c.timestamp_utc).toISOString(), c.close);
-        }
+        for (const c of candles) candleMap.set(new Date(c.timestamp_utc).toISOString(), c.close);
       }
-
-      // Snap a date to the nearest 4H grid boundary (floor)
-      function snapToGrid(date) {
-        const d = new Date(date);
-        const hour = Math.floor(d.getUTCHours() / 4) * 4;
-        d.setUTCHours(hour, 0, 0, 0);
-        return d.toISOString();
-      }
-
-      const PIP_SIZE = 0.0001;
-      let correctCount = 0;
-      let evaluatedCount = 0;
-
+      const snapToGrid = (date) => { const d = new Date(date); d.setUTCHours(Math.floor(d.getUTCHours() / 4) * 4, 0, 0, 0); return d.toISOString(); };
+      const PIP = 0.0001;
+      let correct = 0, evaluated = 0;
       const items = forecasts.map(f => {
         const dp = f.direction_probabilities;
         const dominant = dp.up >= dp.down && dp.up >= dp.flat ? 'UP' : dp.down >= dp.flat ? 'DOWN' : 'FLAT';
-        const dominantText = dominant === 'UP' ? 'Price Up' : dominant === 'DOWN' ? 'Price Down' : 'Flat';
         const color = dominant === 'UP' ? '#00c853' : dominant === 'DOWN' ? '#ff1744' : '#ffab00';
         const time = new Date(f.created_at).toLocaleString(undefined, { month: 'short', day: 'numeric', hour: '2-digit', minute: '2-digit' });
-
-        let outcomeHtml = '';
-
-        // The forecast is made at a candle boundary, predicting the move over the next 4H.
-        // forecast_expiry = boundary + 4H = the timestamp of the "result" candle.
-        // Actual move = close at forecast_expiry - close at (forecast_expiry - 4H)
-        // Snap times to 4H grid since forecasts may be created slightly after the boundary.
+        let outcomeHtml = '<div class="outcome-col"><span style="font-size:0.65rem;color:#556270;font-style:italic">Pending</span></div>';
         const expiry = f.forecast_expiry ? new Date(f.forecast_expiry) : null;
-        const expirySnapped = expiry ? snapToGrid(expiry) : null;
-        const boundarySnapped = expiry ? snapToGrid(new Date(expiry.getTime() - 4 * 60 * 60 * 1000)) : null;
-
-        const closeAtBoundary = boundarySnapped ? candleMap.get(boundarySnapped) : undefined;
-        const closeAtExpiry = expirySnapped ? candleMap.get(expirySnapped) : undefined;
-
-        if (closeAtBoundary !== undefined && closeAtExpiry !== undefined) {
-          const actualPips = (closeAtExpiry - closeAtBoundary) / PIP_SIZE;
-          const actualDir = actualPips > 0.5 ? 'Up' : actualPips < -0.5 ? 'Down' : 'Flat';
-          const actualColor = actualPips > 0.5 ? '#00c853' : actualPips < -0.5 ? '#ff1744' : '#ffab00';
-          const predictedDir = dominant;
-          const actualDirNorm = actualPips > 0.5 ? 'UP' : actualPips < -0.5 ? 'DOWN' : 'FLAT';
-          const correct = predictedDir === actualDirNorm;
-
-          evaluatedCount++;
-          if (correct) correctCount++;
-
-          const resultIcon = correct ? '\u2705' : '\u274C';
-
-          outcomeHtml = `
-            <div class="outcome-col">
-              <span style="background:${actualColor}20;color:${actualColor};padding:0.1rem 0.4rem;border-radius:3px;font-size:0.7rem;font-weight:600">${actualDir}</span>
-              <span style="font-size:0.75rem;min-width:55px;text-align:right">${actualPips > 0 ? '+' : ''}${actualPips.toFixed(1)} pts</span>
-              <span style="font-size:0.75rem">${resultIcon}</span>
-            </div>
-          `;
-        } else {
-          const isExpired = expiry && expiry < new Date();
-          outcomeHtml = `
-            <div class="outcome-col">
-              <span class="outcome-pending">${isExpired ? 'Awaiting candle' : 'Pending'}</span>
-            </div>
-          `;
+        if (expiry) {
+          const c0 = candleMap.get(snapToGrid(new Date(expiry.getTime() - 4 * 3600000)));
+          const c1 = candleMap.get(snapToGrid(expiry));
+          if (c0 !== undefined && c1 !== undefined) {
+            const pips = (c1 - c0) / PIP;
+            const dir = pips > 0.5 ? 'UP' : pips < -0.5 ? 'DOWN' : 'FLAT';
+            const ac = dir === 'UP' ? '#00c853' : dir === 'DOWN' ? '#ff1744' : '#ffab00';
+            const ok = dominant === dir;
+            evaluated++; if (ok) correct++;
+            outcomeHtml = `<div class="outcome-col">
+              <span style="background:${ac}20;color:${ac};padding:0.1rem 0.4rem;border-radius:3px;font-size:0.7rem;font-weight:600">${dir}</span>
+              <span style="font-size:0.72rem;min-width:50px;text-align:right">${pips > 0 ? '+' : ''}${pips.toFixed(1)}</span>
+              <span>${ok ? '✅' : '❌'}</span>
+            </div>`;
+          }
         }
-
-        return `
-          <div class="history-item-extended">
-            <div class="prediction-col">
-              <div class="time">${time}</div>
-              <div class="dir"><span style="background:${color}20;color:${color}">${dominantText} ${(Math.max(dp.up, dp.down, dp.flat) * 100).toFixed(0)}%</span></div>
-              <div class="move">${f.expected_move_pips > 0 ? '+' : ''}${f.expected_move_pips} pts</div>
-              <div class="conf">${(f.confidence_final * 100).toFixed(1)}%</div>
-            </div>
-            ${outcomeHtml}
-          </div>
-        `;
+        return `<div class="history-item-ext">
+          <div class="pred-col">
+            <div class="time">${time}</div>
+            <div class="dir"><span style="background:${color}20;color:${color}">${dominant} ${(Math.max(dp.up, dp.down, dp.flat) * 100).toFixed(0)}%</span></div>
+            <div class="move">${f.expected_move_pips > 0 ? '+' : ''}${f.expected_move_pips} pips</div>
+            <div class="conf">${(f.confidence_final * 100).toFixed(0)}%</div>
+          </div>${outcomeHtml}
+        </div>`;
       }).join('');
-
-      const accuracy = evaluatedCount > 0 ? ((correctCount / evaluatedCount) * 100).toFixed(0) : '--';
-      const statsHtml = evaluatedCount > 0
-        ? `<span style="font-size:0.7rem;color:#8b98a5;text-transform:none;letter-spacing:0;font-weight:400">(${forecasts.length} recent &middot; ${accuracy}% direction accuracy on ${evaluatedCount} evaluated)</span>`
-        : `<span style="font-size:0.7rem;color:#8b98a5;text-transform:none;letter-spacing:0;font-weight:400">(${forecasts.length} recent)</span>`;
-
-      return `
-        <div class="card">
-          <h2>Prediction History ${statsHtml}</h2>
-          <div class="history-header">
-            <span class="hdr-pred">Prediction</span>
-            <span class="hdr-out">Actual Outcome</span>
-          </div>
-          <div class="history-list">${items}</div>
-        </div>
-      `;
+      const acc = evaluated > 0 ? ((correct / evaluated) * 100).toFixed(0) : '--';
+      const accColor = acc !== '--' ? (acc >= 60 ? '#00c853' : acc >= 40 ? '#ffab00' : '#ff1744') : '#8b98a5';
+      return `<div class="card grid-full">
+        <h2>Prediction History + Accuracy</h2>
+        <div class="accuracy-badge" style="background:${accColor}20;color:${accColor}">Direction accuracy: ${acc}% (last ${evaluated} evaluated)</div>
+        <div class="history-list">${items}</div>
+      </div>`;
     }
 
-    // Initial load
-    refreshAll();
+    // ─── DEVELOPER VIEW ────────────────────────────────────
+    function renderHealthCard(forecast, batchRun, traces) {
+      const apiOk = !!forecast;
+      const apiTime = forecast?.execution_metrics?.total_execution_time_ms || '—';
+      const batchOk = batchRun && batchRun.status === 'COMPLETED';
+      const batchTime = batchRun ? timeAgo(batchRun.created_at) : 'Never';
+      const batchStatus = batchRun ? batchRun.status : 'UNKNOWN';
+      const errorTraces = traces ? traces.filter(t => t.status === 'error') : [];
+      const hasErrors = errorTraces.length > 0;
+      let alertHtml = '';
+      if (!apiOk) alertHtml += '<div class="alert-bar">⚠️ API is not responding</div>';
+      if (batchRun && batchRun.status !== 'COMPLETED') alertHtml += `<div class="alert-bar">⚠️ Last batch run: ${batchRun.status}</div>`;
+      if (hasErrors) alertHtml += `<div class="alert-bar">⚠️ ${errorTraces.length} pipeline error(s) in recent traces</div>`;
+      return `<div class="card grid-full">
+        <h2><span class="dot ${(!apiOk || hasErrors) ? 'error' : !batchOk ? 'warn' : ''}"></span>System Health Overview</h2>
+        <div class="health-grid">
+          <div class="health-card"><div class="hc-title">API Health</div><div class="hc-status"><span class="status-dot ${apiOk ? 'green' : 'red'}"></span>${apiOk ? 'Healthy' : 'Down'}</div><div class="hc-detail">Response: ${apiTime}ms</div></div>
+          <div class="health-card"><div class="hc-title">Batch Pipeline</div><div class="hc-status"><span class="status-dot ${batchOk ? 'green' : 'red'}"></span>${batchStatus}</div><div class="hc-detail">Last run: ${batchTime}</div></div>
+          <div class="health-card"><div class="hc-title">Pipeline Errors</div><div class="hc-status"><span class="status-dot ${hasErrors ? 'red' : 'green'}"></span>${hasErrors ? errorTraces.length + ' errors' : 'Clean'}</div><div class="hc-detail">Recent trace window</div></div>
+          <div class="health-card"><div class="hc-title">Model Confidence</div><div class="hc-status"><span class="status-dot green"></span>${forecast ? (forecast.confidence_final * 100).toFixed(1) + '%' : '—'}</div><div class="hc-detail">Final output confidence</div></div>
+        </div>${alertHtml}
+      </div>`;
+    }
 
-    // Auto-refresh every 60 seconds
-    setInterval(refreshAll, 60000);
+    function renderBatchRunCard(batchRun) {
+      if (!batchRun) return '<div class="card grid-full"><h2>Last Batch Run</h2><p class="no-data">No batch runs found</p></div>';
+      const allStages = ['ingestion', 'regime', 'fingerprint', 'similarity', 'sentiment', 'macro', 'confidence', 'forecast', 'tradeability', 'outcome'];
+      const completed = batchRun.completed_stages || [];
+      const failed = batchRun.status !== 'COMPLETED';
+      const stagesHtml = allStages.map((s, i) => {
+        const isDone = completed.includes(s);
+        const isFailed = failed && !isDone && i === completed.length;
+        const cls = isDone ? '' : isFailed ? 'failed' : 'pending';
+        const arrow = i < allStages.length - 1 ? '<span class="pipeline-arrow">→</span>' : '';
+        return `<span class="pipeline-stage ${cls}">${s}</span>${arrow}`;
+      }).join('');
+      const duration = batchRun.duration_ms ? `${(batchRun.duration_ms / 1000).toFixed(1)}s` : '—';
+      const failHtml = batchRun.failure_detail ? `<div style="margin-top:0.75rem;padding:0.5rem;background:#ff174415;border-radius:6px;font-size:0.75rem;color:#ff8a80">${batchRun.failure_detail}</div>` : '';
+      return `<div class="card grid-full">
+        <h2>Last Batch Run</h2>
+        <div class="metrics">
+          <div class="metric"><div class="label">Batch ID</div><div class="value" style="font-size:0.75rem;font-family:monospace">${(batchRun.batch_id || batchRun.id || '—').toString().slice(0, 16)}</div></div>
+          <div class="metric"><div class="label">Status</div><div class="value"><span class="badge ${failed ? 'badge-no-go' : 'badge-go'}">${batchRun.status}</span></div></div>
+          <div class="metric"><div class="label">Duration</div><div class="value">${duration}</div></div>
+          <div class="metric"><div class="label">Started</div><div class="value" style="font-size:0.8rem">${new Date(batchRun.created_at).toLocaleString()}</div></div>
+        </div>
+        <div class="pipeline-stages">${stagesHtml}</div>${failHtml}
+      </div>`;
+    }
+
+    function renderDevTracesCard(traces) {
+      if (!traces || traces.length === 0) return '<div class="card grid-full"><h2>Pipeline Execution Traces</h2><p class="no-data">No traces</p></div>';
+      const maxMs = Math.max(...traces.map(t => t.execution_time_ms || 0), 1);
+      const items = [...traces].reverse().map(t => {
+        const isErr = t.status === 'error';
+        return `<div class="trace-item ${isErr ? 'error-trace' : ''}">
+          <div class="trace-status ${t.status}"></div>
+          <div class="name">${t.engine_name}</div>
+          <div class="version">v${t.engine_version || '?'}</div>
+          <div class="duration-bar"><div class="duration-fill ${isErr ? 'error-fill' : ''}" style="width:${((t.execution_time_ms || 0) / maxMs * 100).toFixed(0)}%"></div></div>
+          <div class="duration-label">${t.execution_time_ms || 0}ms</div>
+        </div>`;
+      }).join('');
+      return `<div class="card grid-full"><h2>Pipeline Execution Traces</h2><div class="trace-timeline">${items}</div></div>`;
+    }
+
+    function renderDevSentimentCard(articles) {
+      if (!articles || articles.length === 0) return '<div class="card"><h2>Sentiment Engine Output</h2><p class="no-data">No data</p></div>';
+      const scores = articles.map(a => a.sentiment_hint ?? 0);
+      const avg = scores.reduce((s, v) => s + v, 0) / scores.length;
+      const confidence = Math.min(articles.length / 10, 1);
+      const rows = articles.slice(0, 5).map(a => {
+        const sc = a.sentiment_hint ?? 0;
+        return `<div class="news-item"><span class="sentiment-badge" style="${sentimentBg(sc)}">${sc >= 0 ? '+' : ''}${sc.toFixed(2)}</span><span style="flex:1;font-size:0.73rem">${a.headline || a.title || 'Untitled'}</span></div>`;
+      }).join('');
+      return `<div class="card">
+        <h2>Sentiment Engine Output</h2>
+        <div class="metrics">
+          <div class="metric"><div class="label">Avg Sentiment</div><div class="value" style="color:${sentimentColor(avg)}">${avg >= 0 ? '+' : ''}${avg.toFixed(3)}</div></div>
+          <div class="metric"><div class="label">Article Count</div><div class="value">${articles.length}</div></div>
+          <div class="metric"><div class="label">Confidence</div><div class="value">${(confidence * 100).toFixed(0)}%</div></div>
+        </div>
+        <div style="margin-top:0.75rem">${rows}</div>
+      </div>`;
+    }
+
+    function renderDevMacroCard(events) {
+      if (!events || events.length === 0) return '<div class="card"><h2>Macro Context Engine</h2><p class="no-data">No events</p></div>';
+      const highCount = events.filter(e => (e.impact || '').toUpperCase() === 'HIGH').length;
+      const medCount = events.filter(e => (e.impact || '').toUpperCase() === 'MEDIUM').length;
+      const items = events.slice(0, 8).map(e => {
+        const imp = (e.impact || 'LOW').toUpperCase();
+        return `<div class="event-item"><span class="impact-badge impact-${imp.toLowerCase()}">${imp}</span><span style="flex:1;font-size:0.75rem">${e.name}</span><span style="font-size:0.65rem;color:#8b98a5">${e.currency || ''}</span></div>`;
+      }).join('');
+      return `<div class="card">
+        <h2>Macro Context Engine</h2>
+        <div class="metrics">
+          <div class="metric"><div class="label">Event Count</div><div class="value">${events.length}</div></div>
+          <div class="metric"><div class="label">High Impact</div><div class="value" style="color:#ff1744">${highCount}</div></div>
+          <div class="metric"><div class="label">Medium</div><div class="value" style="color:#ffab00">${medCount}</div></div>
+        </div>
+        <div style="margin-top:0.75rem">${items}</div>
+      </div>`;
+    }
+
+    function renderSimilarityCard(matches) {
+      if (!matches || matches.length === 0) return '<div class="card grid-full"><h2>Similarity Matches</h2><p class="no-data">No matches</p></div>';
+      const rows = matches.map(m => {
+        const lb = m.layer_breakdown || {};
+        const score = (m.similarity_score * 100).toFixed(2);
+        const layers = ['market_structure', 'volatility', 'liquidity', 'macro', 'sentiment'];
+        const layerBars = layers.map(l => {
+          const v = lb[l] || 0;
+          const c = v > 0.9 ? '#00c853' : v > 0.7 ? '#ffab00' : '#ff1744';
+          return `<span title="${l}: ${(v*100).toFixed(1)}%" style="display:inline-block;width:22px;height:8px;background:#2f3336;border-radius:2px;overflow:hidden;position:relative"><span style="position:absolute;left:0;top:0;height:100%;width:${(v*100).toFixed(0)}%;background:${c};border-radius:2px"></span></span>`;
+        }).join(' ');
+        const matched = (m.match_explanation?.matched_layers || []).join(', ') || '—';
+        return `<tr><td style="color:#8b98a5">#${m.rank}</td><td style="font-family:monospace;font-size:0.65rem;color:#8b98a5">${(m.match_fingerprint_id || '').slice(0, 12)}…</td><td><strong>${score}%</strong></td><td>${layerBars}</td><td style="color:#8b98a5;font-size:0.7rem">${matched}</td></tr>`;
+      }).join('');
+      return `<div class="card grid-full">
+        <h2>Similarity Matches</h2>
+        <table class="sim-table"><thead><tr><th>Rank</th><th>Fingerprint</th><th>Score</th><th>Layers</th><th>Matched</th></tr></thead><tbody>${rows}</tbody></table>
+      </div>`;
+    }
+
+    function renderErrorsCard(errors) {
+      if (!errors || errors.length === 0) return '<div class="card grid-full"><h2>Recent Errors</h2><p class="no-data" style="color:#00c853">No errors — all clear ✓</p></div>';
+      const items = errors.map(e => `<div class="error-item">
+        <div class="err-engine">${e.engine_name || 'Unknown'}</div>
+        <div class="err-detail">${e.error_detail || e.error || 'No detail available'}</div>
+        <div class="err-time">${new Date(e.timestamp_utc).toLocaleString()}</div>
+      </div>`).join('');
+      return `<div class="card grid-full"><h2><span class="dot error"></span>Recent Errors (${errors.length})</h2>${items}</div>`;
+    }
+
+    async function renderBatchDiagnosticsCard() {
+      try {
+        const rows = await supabaseQuery('batch_diagnostics', 'select=*&order=updated_at.desc');
+        if (!rows || rows.length === 0) {
+          return '<div class="card grid-full"><h2>Batch Diagnostics</h2><p class="no-data">No diagnostics data available</p></div>';
+        }
+
+        let html = '<div class="card grid-full"><h2>Batch Diagnostics</h2>';
+        for (const row of rows) {
+          const d = row.diagnostics;
+          html += `<div style="margin-bottom:1rem;padding:0.75rem;background:#0f1419;border-radius:8px">`;
+          html += `<div style="display:flex;justify-content:space-between;margin-bottom:0.5rem">`;
+          html += `<strong>${row.asset}</strong>`;
+          html += `<span style="font-size:0.7rem;color:#8b98a5">batch: ${row.batch_id} · ${timeAgo(row.updated_at)}</span>`;
+          html += `</div>`;
+
+          // Sentiment
+          if (d.sentiment) {
+            html += `<div class="metric"><div class="label">Sentiment</div><div class="value" style="font-size:0.75rem">`;
+            html += `articles=${d.sentiment.article_count} window=${d.sentiment.window_hours}h score=${d.sentiment.sentiment_score.toFixed(4)} conf=${d.sentiment.confidence_factor.toFixed(2)} vec=[${d.sentiment.sentiment_vector.map(v => v.toFixed(3)).join(',')}]`;
+            html += `</div></div>`;
+          }
+
+          // Macro Context
+          if (d.macro_context) {
+            html += `<div class="metric"><div class="label">Macro Context</div><div class="value" style="font-size:0.75rem">`;
+            html += `events=${d.macro_context.event_count} state=${d.macro_context.macro_state} vec=[${d.macro_context.macro_vector.map(v => v.toFixed(3)).join(',')}]`;
+            html += `</div></div>`;
+          }
+
+          // ML Service
+          html += `<div class="metric"><div class="label">ML Service</div><div class="value" style="font-size:0.75rem">`;
+          html += `called=${d.ml_service.called}`;
+          if (d.ml_service.response) {
+            html += ` probs=[${d.ml_service.response.up.toFixed(3)},${d.ml_service.response.down.toFixed(3)},${d.ml_service.response.flat.toFixed(3)}] latency=${d.ml_service.latency_ms}ms`;
+          }
+          html += `</div></div>`;
+
+          // Market Context
+          html += `<div class="metric"><div class="label">Market Context</div><div class="value" style="font-size:0.75rem">`;
+          html += `available=${d.market_context.available} DXY=${d.market_context.dxy ?? '—'} VIX=${d.market_context.vix ?? '—'} SPX=${d.market_context.spx ?? '—'}`;
+          html += `</div></div>`;
+
+          // Similarity
+          if (d.similarity) {
+            html += `<div class="metric"><div class="label">Similarity</div><div class="value" style="font-size:0.75rem">`;
+            html += `matches=${d.similarity.match_count} session_bonus=${d.similarity.session_bonus_count} regime_bonus=${d.similarity.regime_bonus_count}`;
+            html += `</div></div>`;
+          }
+
+          // Outcome
+          if (d.outcome) {
+            html += `<div class="metric"><div class="label">Outcome</div><div class="value" style="font-size:0.75rem">`;
+            html += `flat_threshold=${d.outcome.dynamic_flat_threshold.toFixed(2)} weighted_returns=${d.outcome.weighted_return_count}`;
+            html += `</div></div>`;
+          }
+
+          // Forecast
+          if (d.forecast) {
+            html += `<div class="metric"><div class="label">Forecast</div><div class="value" style="font-size:0.75rem">`;
+            html += `sim=[${d.forecast.similarity_only.up.toFixed(2)},${d.forecast.similarity_only.down.toFixed(2)},${d.forecast.similarity_only.flat.toFixed(2)}] `;
+            html += `ens=[${d.forecast.ensemble.up.toFixed(2)},${d.forecast.ensemble.down.toFixed(2)},${d.forecast.ensemble.flat.toFixed(2)}] α=${d.forecast.alpha_weight}`;
+            html += `</div></div>`;
+          }
+
+          // Gemini
+          if (d.gemini) {
+            html += `<div class="metric"><div class="label">Gemini</div><div class="value" style="font-size:0.75rem">`;
+            html += `scored_articles=${d.gemini.scored_article_count}`;
+            html += `</div></div>`;
+          }
+
+          html += `</div>`;
+        }
+        html += '</div>';
+        return html;
+      } catch (err) {
+        return '<div class="card grid-full"><h2>Batch Diagnostics</h2><p class="no-data">No diagnostics data available</p></div>';
+      }
+    }
+
+    // ─── DATA LOADING ──────────────────────────────────────
+    async function loadTraderView() {
+      const container = document.getElementById('trader-content');
+      container.innerHTML = '<p class="grid-full" style="color:#8b98a5">Loading trader view...</p>';
+      try {
+        const [forecast, candles, events, articles, forecasts] = await Promise.all([
+          fetchForecast().catch(() => null),
+          supabaseQuery('raw_candles', 'select=timestamp_utc,close&asset=eq.EURUSD&timeframe=eq.4H&order=timestamp_utc.desc&limit=20').catch(() => []),
+          supabaseQuery('economic_events', `select=name,impact,currency,event_date&order=event_date.desc&limit=8`).catch(() => []),
+          supabaseQuery('news_articles', 'select=headline,title,sentiment_hint,relevance_score,published_at&order=published_at.desc&limit=8').catch(() => []),
+          supabaseQuery('research_forecasts', 'select=id,asset,confidence_final,created_at,direction_probabilities,expected_move_pips,forecast_expiry&order=created_at.desc&limit=15').catch(() => []),
+        ]);
+        let html = '';
+        html += forecast ? renderPredictionCard(forecast) : '<div class="card grid-full"><h2>Current Prediction</h2><p class="no-data">Could not load forecast from API</p></div>';
+        html += renderSparkline(candles);
+        html += renderSentimentCard(articles, events);
+        html += renderEventsCard(events);
+        html += renderNewsCard(articles);
+        html += renderHistoryCard(forecasts, candles);
+        container.innerHTML = html;
+      } catch (err) {
+        container.innerHTML = `<div class="card grid-full"><p style="color:#ff1744">Error loading trader view: ${err.message}</p></div>`;
+      }
+    }
+
+    async function loadDeveloperView() {
+      const container = document.getElementById('developer-content');
+      container.innerHTML = '<p class="grid-full" style="color:#8b98a5">Loading developer view...</p>';
+      try {
+        const [forecast, batchRuns, traces, similarity, articles, events, errorTraces] = await Promise.all([
+          fetchForecast().catch(() => null),
+          supabaseQuery('batch_runs', 'select=*&order=created_at.desc&limit=1').catch(() => []),
+          supabaseQuery('execution_traces', 'select=engine_name,engine_version,status,execution_time_ms,timestamp_utc,batch_id,error_detail,error&order=timestamp_utc.desc&limit=20').catch(() => []),
+          supabaseQuery('research_similarity_archive', 'select=match_fingerprint_id,similarity_score,rank,layer_breakdown,match_explanation&order=rank.asc&limit=10').catch(() => []),
+          supabaseQuery('news_articles', 'select=headline,title,sentiment_hint,relevance_score,published_at&order=published_at.desc&limit=8').catch(() => []),
+          supabaseQuery('economic_events', 'select=name,impact,currency,event_date&order=event_date.desc&limit=10').catch(() => []),
+          supabaseQuery('execution_traces', 'select=engine_name,error_detail,error,timestamp_utc&status=eq.error&order=timestamp_utc.desc&limit=10').catch(() => []),
+        ]);
+        const batchRun = batchRuns?.[0] || null;
+        let html = '';
+        html += renderHealthCard(forecast, batchRun, traces);
+        html += renderBatchRunCard(batchRun);
+        html += renderDevTracesCard(traces);
+        html += renderDevSentimentCard(articles);
+        html += renderDevMacroCard(events);
+        html += renderSimilarityCard(similarity);
+        html += renderErrorsCard(errorTraces);
+        html += await renderBatchDiagnosticsCard();
+        container.innerHTML = html;
+      } catch (err) {
+        container.innerHTML = `<div class="card grid-full"><p style="color:#ff1744">Error loading developer view: ${err.message}</p></div>`;
+      }
+    }
+
+    // ─── MAIN ──────────────────────────────────────────────
+    async function refreshAll() {
+      const activeTab = document.querySelector('.tab.active')?.dataset?.tab || 'trader';
+      if (activeTab === 'trader') await loadTraderView();
+      else await loadDeveloperView();
+      refreshCountdown = 60;
+    }
+
+    function updateTimer() {
+      refreshCountdown--;
+      if (refreshCountdown <= 0) refreshAll();
+      const el = document.getElementById('refresh-timer');
+      if (el) el.textContent = `Next refresh in ${refreshCountdown}s`;
+    }
+
+    refreshAll();
+    setInterval(updateTimer, 1000);
   </script>
 </body>
 </html>
