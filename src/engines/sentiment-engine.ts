@@ -93,7 +93,9 @@ export function computeSentiment(input: SentimentEngineInput): SentimentEngineOu
 
   // Step 2: Weighted mean → aggregate sentiment
   const totalWeight = weightedScores.reduce((sum, w) => sum + w.weight, 0);
-  const rawAggregate = weightedScores.reduce((sum, w) => sum + w.score * w.weight, 0) / totalWeight;
+  const rawAggregate = totalWeight === 0
+    ? 0.0
+    : weightedScores.reduce((sum, w) => sum + w.score * w.weight, 0) / totalWeight;
   const aggregateSentiment = mapToUnitInterval(rawAggregate);
 
   // Step 3: Directional pressure

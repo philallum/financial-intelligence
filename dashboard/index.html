@@ -145,7 +145,7 @@
   </div>
 
   <script>
-    const SUPABASE_ANON_KEY = 'sb_publishable_LpljDfNLU5cmIjFB2mu-gg_Ve5S6zkL';
+    const SUPABASE_ANON_KEY = 'eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6InZ6ZmFtY2x3bGJ4b25hYnZoY3ZlIiwicm9sZSI6ImFub24iLCJpYXQiOjE3ODI4Njc0MTAsImV4cCI6MjA5ODQ0MzQxMH0.i-P8Ww33yjcYkmr2YQjehVvgLIrycg02dW6_UELrVE4';
     let refreshCountdown = 60;
 
     function switchTab(tab) {
@@ -657,7 +657,7 @@
           fetchForecast().catch(() => null),
           supabaseQuery('raw_candles', 'select=timestamp_utc,close&asset=eq.EURUSD&timeframe=eq.4H&order=timestamp_utc.desc&limit=20').catch(() => []),
           supabaseQuery('economic_events', `select=name,impact,currency,event_date&order=event_date.desc&limit=8`).catch(() => []),
-          supabaseQuery('news_articles', 'select=headline,title,sentiment_hint,relevance_score,published_at&order=published_at.desc&limit=8').catch(() => []),
+          supabaseQuery('news_articles', 'select=headline,sentiment_hint,relevance_score,published_at&sentiment_hint=neq.0&order=published_at.desc&limit=20').catch(() => []),
           supabaseQuery('research_forecasts', 'select=id,asset,confidence_final,created_at,direction_probabilities,expected_move_pips,forecast_expiry&order=created_at.desc&limit=15').catch(() => []),
         ]);
         let html = '';
@@ -680,11 +680,11 @@
         const [forecast, batchRuns, traces, similarity, articles, events, errorTraces] = await Promise.all([
           fetchForecast().catch(() => null),
           supabaseQuery('batch_runs', 'select=*&order=created_at.desc&limit=1').catch(() => []),
-          supabaseQuery('execution_traces', 'select=engine_name,engine_version,status,execution_time_ms,timestamp_utc,batch_id,error_detail,error&order=timestamp_utc.desc&limit=20').catch(() => []),
+          supabaseQuery('execution_traces', 'select=engine_name,engine_version,status,execution_time_ms,timestamp_utc,batch_id,error_detail&order=timestamp_utc.desc&limit=20').catch(() => []),
           supabaseQuery('research_similarity_archive', 'select=match_fingerprint_id,similarity_score,rank,layer_breakdown,match_explanation&order=rank.asc&limit=10').catch(() => []),
-          supabaseQuery('news_articles', 'select=headline,title,sentiment_hint,relevance_score,published_at&order=published_at.desc&limit=8').catch(() => []),
+          supabaseQuery('news_articles', 'select=headline,sentiment_hint,relevance_score,published_at&sentiment_hint=neq.0&order=published_at.desc&limit=20').catch(() => []),
           supabaseQuery('economic_events', 'select=name,impact,currency,event_date&order=event_date.desc&limit=10').catch(() => []),
-          supabaseQuery('execution_traces', 'select=engine_name,error_detail,error,timestamp_utc&status=eq.error&order=timestamp_utc.desc&limit=10').catch(() => []),
+          supabaseQuery('execution_traces', 'select=engine_name,error_detail,timestamp_utc&status=eq.error&order=timestamp_utc.desc&limit=10').catch(() => []),
         ]);
         const batchRun = batchRuns?.[0] || null;
         let html = '';
