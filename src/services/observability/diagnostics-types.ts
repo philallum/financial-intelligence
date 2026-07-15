@@ -58,6 +58,34 @@ export interface GeminiDiagnostics {
   scored_article_count: number;
 }
 
+/** Learning pipeline stage diagnostics — recorded once per batch cycle per asset. */
+export interface LearningPipelineDiagnostics {
+  /** Whether calibration was applied this cycle. */
+  calibration_applied: boolean;
+  /** Version identifier of the calibration model used, or null if not applied. */
+  calibration_model_version: string | null;
+  /** Raw (pre-calibration) probability vector, recorded when calibration is applied. */
+  raw_probabilities: { up: number; down: number; flat: number } | null;
+  /** Calibrated probability vector, recorded when calibration is applied. */
+  calibrated_probabilities: { up: number; down: number; flat: number } | null;
+  /** Whether SHAP values were successfully computed this cycle. */
+  shap_computed: boolean;
+  /** Top 3 SHAP features by absolute contribution, or null if SHAP not computed. */
+  top_shap_features: Array<{ feature: string; shap_value: number }> | null;
+  /** Whether event context was applied this cycle. */
+  event_context_applied: boolean;
+  /** The event type that triggered context retrieval, or null if none. */
+  event_type: string | null;
+  /** Event impact summary values when event context is applied. */
+  event_impact: {
+    median_move_pips: number;
+    direction_skew: number;
+    vol_expansion_ratio: number;
+  } | null;
+  /** Failure reason if any learning pipeline component failed, or null on success. */
+  failure_reason: string | null;
+}
+
 /** Complete diagnostics payload stored in the JSONB column. */
 export interface BatchDiagnosticsPayload {
   sentiment: SentimentDiagnostics | null;
@@ -68,6 +96,7 @@ export interface BatchDiagnosticsPayload {
   outcome: OutcomeDiagnostics | null;
   forecast: ForecastDiagnostics | null;
   gemini: GeminiDiagnostics | null;
+  learning_pipeline: LearningPipelineDiagnostics | null;
 }
 
 /** Row shape for the batch_diagnostics table. */

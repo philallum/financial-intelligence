@@ -24,6 +24,7 @@ import type {
   OutcomeDiagnostics,
   ForecastDiagnostics,
   GeminiDiagnostics,
+  LearningPipelineDiagnostics,
 } from './diagnostics-types.js';
 
 export class DiagnosticsCollector {
@@ -39,6 +40,7 @@ export class DiagnosticsCollector {
   private outcome: OutcomeDiagnostics | null = null;
   private forecast: ForecastDiagnostics | null = null;
   private gemini: GeminiDiagnostics | null = null;
+  private learningPipeline: LearningPipelineDiagnostics | null = null;
 
   constructor(asset: string, batchId: string, supabase: SupabaseClient) {
     this.asset = asset;
@@ -118,6 +120,15 @@ export class DiagnosticsCollector {
     }
   }
 
+  /** Record learning pipeline stage diagnostics. Never throws. */
+  recordLearningPipeline(data: LearningPipelineDiagnostics): void {
+    try {
+      this.learningPipeline = data;
+    } catch (err) {
+      console.warn('[DiagnosticsCollector] Error recording learning_pipeline:', err);
+    }
+  }
+
   /** Build the full diagnostics payload from accumulated observations. */
   private buildPayload(): BatchDiagnosticsPayload {
     return {
@@ -129,6 +140,7 @@ export class DiagnosticsCollector {
       outcome: this.outcome,
       forecast: this.forecast,
       gemini: this.gemini,
+      learning_pipeline: this.learningPipeline,
     };
   }
 

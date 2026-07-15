@@ -1,19 +1,22 @@
 # =============================================================================
-# Cloud Scheduler Configuration — Batch Pipeline Triggers
+# Cloud Scheduler Configuration — Batch Pipeline & ML Service Triggers
 # =============================================================================
-# Defines 6 cron jobs that trigger the batch pipeline every 4 hours.
-# Each trigger fires at 2 minutes past the hour (60-180s buffer after candle close).
+# Defines 7 cron jobs:
+#   - 6 batch pipeline triggers every 4 hours (00:02–20:02 UTC)
+#   - 1 weekly drift check on the ML service (Sundays 02:00 UTC)
 #
-# Schedule: 00:02, 04:02, 08:02, 12:02, 16:02, 20:02 UTC
+# Batch triggers fire at 2 minutes past the hour (60-180s buffer after candle close).
 # Target: Cloud Run batch service (fip-batch) via authenticated HTTP POST
+#
+# Weekly drift check triggers drift detection + conditional auto-retraining.
+# Target: Cloud Run ML service (fip-ml) via authenticated HTTP POST
 #
 # Deploy with the companion script: deploy/setup-scheduler.sh
 #
-# Requirements: 12.2, 14.1
+# Requirements: 7.1, 7.2, 7.3, 12.2, 14.1
 # =============================================================================
 
-# Configuration for all 6 Cloud Scheduler jobs
-# These trigger the batch pipeline at each 4H candle boundary + 2 minute buffer
+# Configuration for all 7 Cloud Scheduler jobs
 
 schedulerJobs:
   - name: fip-batch-trigger-0002
@@ -117,3 +120,32 @@ schedulerJobs:
       retryCount: 1
       maxRetryDuration: "60s"
     attemptDeadline: "900s"
+
+  # -------------------------------------------------------------------------
+  # Weekly Drift Check — ML Service
+  # -------------------------------------------------------------------------
+  # Triggers drift detection and conditional auto-retraining on the ML service.
+  # If drift is detected in any regime, the endpoint will invoke /train internally.
+  # Retries with exponential backoff (30s–120s) to handle transient unavailability.
+  #
+  # Requirements: 7.1, 7.2, 7.3
+  # -------------------------------------------------------------------------
+
+  - name: fip-ml-drift-check-weekly
+    description: "Weekly drift check + conditional retraining (Sundays 02:00 UTC)"
+    schedule: "0 2 * * 0"
+    timeZone: "UTC"
+    httpTarget:
+      uri: "https://fip-ml-HASH-REGION.a.run.app/drift-check"
+      httpMethod: POST
+      headers:
+        Content-Type: "application/json"
+      body: '{}'
+      oidcToken:
+        serviceAccountEmail: "fip-scheduler@PROJECT_ID.iam.gserviceaccount.com"
+    retryConfig:
+      retryCount: 3
+      maxRetryDuration: "300s"
+      minBackoffDuration: "30s"
+      maxBackoffDuration: "120s"
+    attemptDeadline: "600s"

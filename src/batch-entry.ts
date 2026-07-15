@@ -44,7 +44,10 @@ import type {
   OutcomeDiagnostics,
   ForecastDiagnostics,
   GeminiDiagnostics,
+  LearningPipelineDiagnostics,
 } from './services/observability/diagnostics-types.js';
+import { EventContextService } from './services/pipeline/event-context-service.js';
+import type { EventImpactSummary } from './services/pipeline/event-context-service.js';
 
 /**
  * Compute the current candle boundary timestamp.
@@ -72,6 +75,7 @@ function getCurrentCandleBoundary(): string {
  * returns, the accumulated data is fed to a DiagnosticsCollector and persisted.
  */
 interface DiagnosticsAccumulator {
+  currentAsset: string;
   marketContext: MarketContextDiagnostics | null;
   sentiment: SentimentDiagnostics | null;
   macroContext: MacroContextDiagnostics | null;
@@ -80,11 +84,13 @@ interface DiagnosticsAccumulator {
   forecast: ForecastDiagnostics | null;
   mlService: MLServiceDiagnostics | null;
   gemini: GeminiDiagnostics | null;
+  learningPipeline: LearningPipelineDiagnostics | null;
 }
 
 /** Create a fresh (empty) diagnostics accumulator. */
 function createDiagnosticsAccumulator(): DiagnosticsAccumulator {
   return {
+    currentAsset: '',
     marketContext: null,
     sentiment: null,
     macroContext: null,
@@ -93,6 +99,7 @@ function createDiagnosticsAccumulator(): DiagnosticsAccumulator {
     forecast: null,
     mlService: null,
     gemini: null,
+    learningPipeline: null,
   };
 }
 
@@ -100,7 +107,7 @@ function createDiagnosticsAccumulator(): DiagnosticsAccumulator {
  * Create stage handlers that delegate to the real engine and service implementations.
  * Each handler follows the contract defined in batch-orchestrator.ts.
  */
-function createStageHandlers(supabase: SupabaseClient, calibrationParams: CalibrationParameters, diagAccumulator: DiagnosticsAccumulator): StageHandlers {
+function createStageHandlers(supabase: SupabaseClient, calibrationParams: CalibrationParameters, diagAccumulator: DiagnosticsAccumulator, eventContextService: EventContextService): StageHandlers {
   const similarityArchiver = createSimilarityArchiver(supabase);
 
   return {
@@ -520,28 +527,61 @@ function createStageHandlers(supabase: SupabaseClient, calibrationParams: Calibr
       const { computeForecastFromDistribution } = await import('./engines/forecast-engine.js');
       const similarityForecast = computeForecastFromDistribution(input.outcome_distribution);
 
+      // ─── Tier 5: Event Context Retrieval ────────────────────────────────
+      // Query upcoming high-impact events and retrieve historical impact summary.
+      // Used to augment ML feature vector (positions 30-32). Graceful degradation on failure.
+      let eventContext: EventImpactSummary | null = null;
+      try {
+        eventContext = await eventContextService.getEventContext(
+          diagAccumulator.currentAsset,
+          new Date(),
+        );
+        if (eventContext) {
+          console.log(
+            `[BatchEntry] Event context: type="${eventContext.event_type}" median_pips=${eventContext.median_move_pips} skew=${eventContext.direction_skew} vol_ratio=${eventContext.vol_expansion_ratio}`,
+          );
+        }
+      } catch (err) {
+        console.warn(`[BatchEntry] Event context retrieval failed (non-blocking): ${err instanceof Error ? err.message : String(err)}`);
+      }
+
       // ─── Tier 4.3: Ensemble with ML Service (non-blocking) ────────────────
       // Call the ML service for XGBoost probabilities and blend with similarity-based.
       // If ML service is unavailable, use similarity-only (graceful degradation).
       const mlServiceUrl = process.env['ML_SERVICE_URL'];
+
+      // Learning pipeline tracking state
+      let rawProbsForCalibration: { up: number; down: number; flat: number } | null = null;
+      let calibratedProbs: { up: number; down: number; flat: number } | null = null;
+      let calibrationApplied = false;
+      let calibrationModelVersion: string | null = null;
+      let shapComputed = false;
+      let topShapFeatures: Array<{ feature: string; shap_value: number }> | null = null;
+      let learningPipelineFailure: string | null = null;
+
       if (mlServiceUrl) {
         try {
-          // The ML service needs the fingerprint features — we get them from
-          // the fingerprint that was just generated (available via closure in orchestrator)
-          // For now, we'll attempt the call; if the service isn't trained yet, it returns 503.
+          // Augment features with event context values at positions 30-32
+          // Use neutral fill values when event context is null: [0.0, 0.5, 1.0]
+          const eventFeatures = eventContext
+            ? [eventContext.median_move_pips, eventContext.direction_skew, eventContext.vol_expansion_ratio]
+            : [0.0, 0.5, 1.0];
+
           const mlStartTime = Date.now();
           const mlResponse = await fetch(`${mlServiceUrl}/predict`, {
             method: 'POST',
             headers: { 'Content-Type': 'application/json' },
             body: JSON.stringify({
-              // Features will be populated when we wire the fingerprint data through
-              // For now this is a placeholder — the ML service returns 503 until trained
               market_structure: Array(16).fill(0.5),
               volatility_profile: Array(12).fill(0.5),
               macro_context: Array(8).fill(0.5),
               sentiment_pressure: Array(6).fill(0.5),
               session_london: 0, session_ny: 0, session_asia: 0,
               volatility_regime_high: 0, volatility_regime_low: 0,
+              // Event context features (positions 30-32)
+              event_median_move_pips: eventFeatures[0],
+              event_direction_skew: eventFeatures[1],
+              event_vol_expansion_ratio: eventFeatures[2],
             }),
             signal: AbortSignal.timeout(3000), // 3s timeout
           });
@@ -585,6 +625,99 @@ function createStageHandlers(supabase: SupabaseClient, calibrationParams: Calibr
               };
             } catch { /* diagnostics must never affect pipeline */ }
 
+            // ─── Tier 5: Calibration ────────────────────────────────────────
+            // Call POST /calibrate to get calibrated probabilities (graceful degradation)
+            rawProbsForCalibration = { ...ensembled.direction_probabilities };
+            try {
+              const calibrationResponse = await fetch(`${mlServiceUrl}/calibrate`, {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({
+                  up: ensembled.direction_probabilities.up,
+                  down: ensembled.direction_probabilities.down,
+                  flat: ensembled.direction_probabilities.flat,
+                }),
+                signal: AbortSignal.timeout(3000),
+              });
+
+              if (calibrationResponse.ok) {
+                const calResult = await calibrationResponse.json() as {
+                  up: number; down: number; flat: number;
+                  calibrated: boolean; model_version: string | null;
+                };
+
+                if (calResult.calibrated) {
+                  calibrationApplied = true;
+                  calibrationModelVersion = calResult.model_version;
+                  calibratedProbs = { up: calResult.up, down: calResult.down, flat: calResult.flat };
+                  // Update ensemble probabilities with calibrated values
+                  ensembled.direction_probabilities.up = calResult.up;
+                  ensembled.direction_probabilities.down = calResult.down;
+                  ensembled.direction_probabilities.flat = calResult.flat;
+                  console.log(`[BatchEntry] Calibration applied (model=${calResult.model_version}): [${calResult.up},${calResult.down},${calResult.flat}]`);
+                } else {
+                  console.log('[BatchEntry] Calibration: no model loaded, using raw probabilities');
+                }
+              }
+            } catch (calErr) {
+              learningPipelineFailure = `calibration_failed: ${calErr instanceof Error ? calErr.message : String(calErr)}`;
+              console.warn(`[BatchEntry] Calibration call failed (non-blocking): ${calErr instanceof Error ? calErr.message : String(calErr)}`);
+            }
+
+            // ─── Tier 5: SHAP Computation (fire-and-forget) ─────────────────
+            // Trigger SHAP computation without blocking the pipeline
+            try {
+              const shapPromise = fetch(`${mlServiceUrl}/explain/compute`, {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({
+                  asset: diagAccumulator.currentAsset,
+                  features: {
+                    market_structure: Array(16).fill(0.5),
+                    volatility_profile: Array(12).fill(0.5),
+                    macro_context: Array(8).fill(0.5),
+                    sentiment_pressure: Array(6).fill(0.5),
+                    event_median_move_pips: eventFeatures[0],
+                    event_direction_skew: eventFeatures[1],
+                    event_vol_expansion_ratio: eventFeatures[2],
+                  },
+                }),
+                signal: AbortSignal.timeout(5000),
+              });
+              // Fire and forget — don't await, but handle gracefully
+              shapPromise
+                .then(async (resp) => {
+                  if (resp.ok) {
+                    const shapResult = await resp.json() as { top_features?: Array<{ feature: string; shap_value: number }> };
+                    shapComputed = true;
+                    topShapFeatures = shapResult.top_features?.slice(0, 3) ?? null;
+                  }
+                })
+                .catch(() => { /* SHAP failure is non-blocking */ });
+            } catch { /* SHAP trigger failure is non-blocking */ }
+
+            // Record learning pipeline diagnostics
+            try {
+              diagAccumulator.learningPipeline = {
+                calibration_applied: calibrationApplied,
+                calibration_model_version: calibrationModelVersion,
+                raw_probabilities: rawProbsForCalibration,
+                calibrated_probabilities: calibratedProbs,
+                shap_computed: shapComputed,
+                top_shap_features: topShapFeatures,
+                event_context_applied: eventContext !== null,
+                event_type: eventContext?.event_type ?? null,
+                event_impact: eventContext
+                  ? {
+                      median_move_pips: eventContext.median_move_pips,
+                      direction_skew: eventContext.direction_skew,
+                      vol_expansion_ratio: eventContext.vol_expansion_ratio,
+                    }
+                  : null,
+                failure_reason: learningPipelineFailure,
+              };
+            } catch { /* diagnostics must never affect pipeline */ }
+
             return ensembled;
           } else {
             // ML responded but not ok — record as called but no usable response
@@ -618,6 +751,28 @@ function createStageHandlers(supabase: SupabaseClient, calibrationParams: Calibr
           similarity_only: similarityForecast.direction_probabilities,
           ensemble: similarityForecast.direction_probabilities,
           alpha_weight: 1.0,
+        };
+      } catch { /* diagnostics must never affect pipeline */ }
+
+      // Record learning pipeline diagnostics (no ML service — only event context applies)
+      try {
+        diagAccumulator.learningPipeline = {
+          calibration_applied: false,
+          calibration_model_version: null,
+          raw_probabilities: null,
+          calibrated_probabilities: null,
+          shap_computed: false,
+          top_shap_features: null,
+          event_context_applied: eventContext !== null,
+          event_type: eventContext?.event_type ?? null,
+          event_impact: eventContext
+            ? {
+                median_move_pips: eventContext.median_move_pips,
+                direction_skew: eventContext.direction_skew,
+                vol_expansion_ratio: eventContext.vol_expansion_ratio,
+              }
+            : null,
+          failure_reason: mlServiceUrl ? 'ml_service_unavailable' : null,
         };
       } catch { /* diagnostics must never affect pipeline */ }
 
@@ -774,7 +929,8 @@ async function main(): Promise<void> {
   }
 
   const diagAccumulator = createDiagnosticsAccumulator();
-  const handlers = createStageHandlers(supabase, calibrationParams, diagAccumulator);
+  const eventContextService = new EventContextService(supabase);
+  const handlers = createStageHandlers(supabase, calibrationParams, diagAccumulator, eventContextService);
 
   const orchestrator = new BatchOrchestrator({
     supabaseClient: supabase,
@@ -792,6 +948,7 @@ async function main(): Promise<void> {
       console.log(`[BatchEntry] Processing ${asset.symbol} (${timeframe})`);
 
       // Reset diagnostics accumulator for this asset/timeframe execution
+      diagAccumulator.currentAsset = asset.symbol;
       diagAccumulator.marketContext = null;
       diagAccumulator.sentiment = null;
       diagAccumulator.macroContext = null;
@@ -800,6 +957,7 @@ async function main(): Promise<void> {
       diagAccumulator.forecast = null;
       diagAccumulator.mlService = null;
       diagAccumulator.gemini = null;
+      diagAccumulator.learningPipeline = null;
 
       try {
         const result = await orchestrator.execute({
@@ -830,6 +988,7 @@ async function main(): Promise<void> {
           if (diagAccumulator.forecast) diagnostics.recordForecast(diagAccumulator.forecast);
           if (diagAccumulator.mlService) diagnostics.recordMLService(diagAccumulator.mlService);
           if (diagAccumulator.gemini) diagnostics.recordGemini(diagAccumulator.gemini);
+          if (diagAccumulator.learningPipeline) diagnostics.recordLearningPipeline(diagAccumulator.learningPipeline);
           diagnostics.persist().catch(() => {});
         } catch { /* diagnostics persistence must never affect pipeline */ }
       } catch (error) {

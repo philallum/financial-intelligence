@@ -2,3 +2,5 @@ node_modules/
 dist/
 .env
 *.log
+ml_service/.venv
+ml_service/.pytest_cache

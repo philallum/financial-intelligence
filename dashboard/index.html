@@ -648,6 +648,150 @@
       }
     }
 
+    // ─── CONTINUOUS LEARNING CARD ──────────────────────────
+    async function renderContinuousLearningCard(diagRows = null, driftRows = null) {
+      try {
+        // Query data if not provided (allows testability with mock data)
+        if (diagRows === null) {
+          diagRows = await supabaseQuery('batch_diagnostics', 'select=*&order=updated_at.desc&limit=5').catch(() => []);
+        }
+        if (driftRows === null) {
+          const sevenDaysAgo = new Date(Date.now() - 7 * 24 * 60 * 60 * 1000).toISOString();
+          driftRows = await supabaseQuery('drift_alerts', `select=*&detected_at=gte.${sevenDaysAgo}&order=detected_at.desc`).catch(() => []);
+        }
+
+        // Extract learning_pipeline diagnostics from batch_diagnostics rows
+        const lpDiags = (diagRows || [])
+          .map(row => {
+            const lp = row.diagnostics && row.diagnostics.learning_pipeline;
+            return lp ? { ...lp, updated_at: row.updated_at, batch_id: row.batch_id } : null;
+          })
+          .filter(Boolean);
+
+        // No data at all
+        if (lpDiags.length === 0 && (!driftRows || driftRows.length === 0)) {
+          return '<div class="card grid-full"><h2>Continuous Learning Pipeline</h2><p class="no-data">No data available</p></div>';
+        }
+
+        const latest = lpDiags.length > 0 ? lpDiags[0] : null;
+
+        // --- Component Status Grid ---
+        let calibrationStatus = 'No data';
+        let calibrationDot = 'yellow';
+        let calibrationDetail = '';
+        let calibrationWarning = false;
+        if (latest) {
+          if (latest.calibration_applied) {
+            calibrationStatus = 'Applied';
+            calibrationDot = 'green';
+            calibrationDetail = latest.calibration_model_version ? `Model: ${latest.calibration_model_version}` : '';
+          } else {
+            calibrationStatus = 'Not Applied';
+            calibrationDot = 'red';
+            calibrationWarning = true;
+            calibrationDetail = latest.failure_reason || 'Calibration skipped';
+          }
+        }
+
+        let shapStatus = 'No data';
+        let shapDot = 'yellow';
+        let shapDetail = '';
+        if (latest) {
+          if (latest.shap_computed) {
+            shapStatus = 'Computed';
+            shapDot = 'green';
+            if (latest.top_shap_features && latest.top_shap_features.length > 0) {
+              shapDetail = 'Top: ' + latest.top_shap_features.map(f => f.feature).join(', ');
+            }
+          } else {
+            shapStatus = 'Skipped';
+            shapDot = 'yellow';
+            shapDetail = latest.failure_reason || '';
+          }
+        }
+
+        let eventStatus = 'No data';
+        let eventDot = 'yellow';
+        let eventDetail = '';
+        if (latest) {
+          if (latest.event_context_applied) {
+            eventStatus = 'Applied';
+            eventDot = 'green';
+            eventDetail = latest.event_type ? `Event: ${latest.event_type}` : '';
+          } else {
+            eventStatus = 'Not Applied';
+            eventDot = 'yellow';
+            eventDetail = 'No event context';
+          }
+        }
+
+        let driftStatus = 'No data';
+        let driftDot = 'yellow';
+        const recentDrift = driftRows && driftRows.length > 0;
+        if (latest || recentDrift) {
+          if (recentDrift) {
+            driftStatus = 'Detected';
+            driftDot = 'red';
+          } else {
+            driftStatus = 'Healthy';
+            driftDot = 'green';
+          }
+        }
+
+        let html = '<div class="card grid-full">';
+        html += '<h2><span class="dot ' + (calibrationWarning || recentDrift ? 'warn' : '') + '"></span>Continuous Learning Pipeline</h2>';
+
+        // Health grid
+        html += '<div class="health-grid">';
+        html += `<div class="health-card"><div class="hc-title">Calibration</div><div class="hc-status"><span class="status-dot ${calibrationDot}"></span>${calibrationStatus}</div><div class="hc-detail">${calibrationDetail}</div></div>`;
+        html += `<div class="health-card"><div class="hc-title">SHAP Explainability</div><div class="hc-status"><span class="status-dot ${shapDot}"></span>${shapStatus}</div><div class="hc-detail">${shapDetail}</div></div>`;
+        html += `<div class="health-card"><div class="hc-title">Event Context</div><div class="hc-status"><span class="status-dot ${eventDot}"></span>${eventStatus}</div><div class="hc-detail">${eventDetail}</div></div>`;
+        html += `<div class="health-card"><div class="hc-title">Drift Detection</div><div class="hc-status"><span class="status-dot ${driftDot}"></span>${driftStatus}</div><div class="hc-detail">${recentDrift ? driftRows.length + ' alert(s) in 7 days' : 'No drift detected'}</div></div>`;
+        html += '</div>';
+
+        // Calibration warning indicator
+        if (calibrationWarning) {
+          html += '<div class="alert-bar">⚠️ Calibration not applied — predictions are using raw uncalibrated probabilities</div>';
+        }
+
+        // Drift alert detail bar
+        if (recentDrift) {
+          const latestDrift = driftRows[0];
+          const regime = latestDrift.regime || 'Unknown';
+          const deviation = latestDrift.deviation_sigmas != null ? latestDrift.deviation_sigmas.toFixed(2) + 'σ' : '—';
+          const retrainStatus = latestDrift.retrain_triggered ? (latestDrift.retrain_outcome || 'triggered') : 'not triggered';
+          html += `<div class="alert-bar">🔴 Drift detected in <strong>${regime}</strong> regime — deviation: ${deviation} — retrain: ${retrainStatus}</div>`;
+        }
+
+        // Timeline of last 5 batch cycles
+        if (lpDiags.length > 0) {
+          html += '<div style="margin-top:1rem"><div style="font-size:0.7rem;color:#8b98a5;text-transform:uppercase;letter-spacing:0.03em;margin-bottom:0.5rem">Last ' + lpDiags.length + ' Batch Cycles</div>';
+          html += '<div style="display:flex;flex-direction:column;gap:0.4rem">';
+          for (const diag of lpDiags) {
+            const calOk = diag.calibration_applied;
+            const shapOk = diag.shap_computed;
+            const eventOk = diag.event_context_applied;
+            const noFailure = !diag.failure_reason;
+            const timeLabel = timeAgo(diag.updated_at);
+            html += `<div style="display:flex;align-items:center;gap:0.75rem;padding:0.4rem 0.6rem;background:#0f1419;border-radius:6px;font-size:0.75rem">`;
+            html += `<span style="width:80px;color:#8b98a5">${timeLabel}</span>`;
+            html += `<span title="Calibration" class="status-dot ${calOk ? 'green' : 'red'}"></span>`;
+            html += `<span title="SHAP" class="status-dot ${shapOk ? 'green' : 'yellow'}"></span>`;
+            html += `<span title="Event Context" class="status-dot ${eventOk ? 'green' : 'yellow'}"></span>`;
+            html += `<span title="No Failures" class="status-dot ${noFailure ? 'green' : 'red'}"></span>`;
+            html += `<span style="color:#8b98a5;font-size:0.65rem;margin-left:auto">Cal · SHAP · Event · Status</span>`;
+            html += `</div>`;
+          }
+          html += '</div></div>';
+        }
+
+        html += '</div>';
+        return html;
+      } catch (err) {
+        return '<div class="card grid-full"><h2>Continuous Learning Pipeline</h2><p class="no-data">No data available</p></div>';
+      }
+    }
+
     // ─── DATA LOADING ──────────────────────────────────────
     async function loadTraderView() {
       const container = document.getElementById('trader-content');
@@ -696,6 +840,7 @@
         html += renderSimilarityCard(similarity);
         html += renderErrorsCard(errorTraces);
         html += await renderBatchDiagnosticsCard();
+        html += await renderContinuousLearningCard();
         container.innerHTML = html;
       } catch (err) {
         container.innerHTML = `<div class="card grid-full"><p style="color:#ff1744">Error loading developer view: ${err.message}</p></div>`;

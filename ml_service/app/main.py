@@ -14,8 +14,9 @@ Endpoints:
 from fastapi import FastAPI
 from contextlib import asynccontextmanager
 
-from app.routers import predict, train, health
+from app.routers import predict, train, health, calibration, explainability, drift
 from app.services.model_store import ModelStore
+from app.services.calibration import CalibrationService
 
 
 @asynccontextmanager
@@ -23,6 +24,8 @@ async def lifespan(app: FastAPI):
     """Load model on startup if available."""
     store = ModelStore.get_instance()
     store.load_if_available()
+    cal_service = CalibrationService.get_instance()
+    cal_service.load_if_available()
     yield
 
 
@@ -36,3 +39,6 @@ app = FastAPI(
 app.include_router(health.router)
 app.include_router(predict.router)
 app.include_router(train.router)
+app.include_router(calibration.router)
+app.include_router(explainability.router)
+app.include_router(drift.router)
