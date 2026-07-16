@@ -51,14 +51,8 @@ export function detectAssetId(text: string): string {
     }
   }
 
-  // Single currency mentioned — default to that currency paired with USD
   if (mentioned.length === 1) {
-    const currency = mentioned[0];
-    if (currency === "USD") return "forex";
-    const pairMatch = CURRENCY_PAIRS.find(
-      (p) => p.currencies.includes(currency) && p.currencies.includes("USD")
-    );
-    return pairMatch?.assetId ?? "forex";
+    return "forex";
   }
 
   // Keyword-based detection for articles that mention central banks or economies
@@ -90,7 +84,11 @@ export function computeRelevanceScore(text: string): number {
   const mentioned = CURRENCY_CODES.filter((code) => upperText.includes(code));
 
   // Direct pair name match is highest relevance
-  if (upperText.includes("EUR/USD") || upperText.includes("EURUSD")) return 0.9;
+  for (const pair of CURRENCY_PAIRS) {
+    const slashForm = `${pair.currencies[0]}/${pair.currencies[1]}`;
+    const concatForm = `${pair.currencies[0]}${pair.currencies[1]}`;
+    if (upperText.includes(slashForm) || upperText.includes(concatForm)) return 0.9;
+  }
 
   // Two currencies from a known pair
   if (mentioned.length >= 2) return 0.8;
@@ -200,7 +198,7 @@ async function fetchNewsAPI(
   const fromStr = fromDate.toISOString().split("T")[0];
   const toStr = now.toISOString().split("T")[0];
 
-  const url = `https://newsapi.org/v2/everything?q=(EUR+USD)+OR+(ECB+rate)+OR+(Fed+rate)+OR+(EURUSD)+OR+(forex+dollar+euro)&from=${fromStr}&to=${toStr}&sortBy=publishedAt&pageSize=${config.maxArticlesPerSource}&apiKey=${apiKey}`;
+  const url = `https://newsapi.org/v2/everything?q=(EUR+USD)+OR+(GBP+USD)+OR+(ECB+rate)+OR+(Fed+rate)+OR+(BoE+rate)+OR+(EURUSD)+OR+(GBPUSD)+OR+(forex+dollar+euro+pound+sterling)&from=${fromStr}&to=${toStr}&sortBy=publishedAt&pageSize=${config.maxArticlesPerSource}&apiKey=${apiKey}`;
 
   rateLimits.recordRequest("news_api");
   const response = await fetch(url);

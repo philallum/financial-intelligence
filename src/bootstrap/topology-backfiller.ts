@@ -111,7 +111,7 @@ export async function backfillTopology(
 
     const { error } = await supabase
       .from('fingerprint_topology')
-      .upsert(rows, { onConflict: 'fingerprint_id', ignoreDuplicates: true });
+      .upsert(rows, { onConflict: 'fingerprint_id,asset', ignoreDuplicates: true });
 
     if (error) {
       console.error(

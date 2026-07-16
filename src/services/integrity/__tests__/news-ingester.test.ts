@@ -21,8 +21,8 @@ describe('detectAssetId', () => {
     expect(detectAssetId('USD JPY surges past 150')).toBe('usdjpy');
   });
 
-  it('returns "audusd" for a single AUD mention (paired with USD)', () => {
-    expect(detectAssetId('Australian dollar AUD weakens')).toBe('audusd');
+  it('returns "forex" for a single AUD mention (single-currency fallback)', () => {
+    expect(detectAssetId('Australian dollar AUD weakens')).toBe('forex');
   });
 
   it('returns "forex" when only USD is mentioned', () => {
@@ -40,6 +40,14 @@ describe('detectAssetId', () => {
   it('handles multiple pairs and returns first match', () => {
     // EUR, USD, GBP all mentioned — EUR/USD pair comes first in order
     expect(detectAssetId('EUR USD GBP all moving')).toBe('eurusd');
+  });
+
+  it('returns "gbpusd" when both GBP and USD are mentioned in different positions', () => {
+    expect(detectAssetId('The GBP outlook with USD strength')).toBe('gbpusd');
+  });
+
+  it('returns "forex" when only "GBP" is mentioned (single-currency fallback)', () => {
+    expect(detectAssetId('GBP weakens on Brexit news')).toBe('forex');
   });
 });
 
@@ -62,6 +70,26 @@ describe('computeRelevanceScore', () => {
 
   it('returns 0.3 when no currencies are mentioned', () => {
     expect(computeRelevanceScore('Forex market update')).toBe(0.3);
+  });
+
+  it('returns 0.9 when "GBP/USD" appears at start of text', () => {
+    expect(computeRelevanceScore('GBP/USD trades higher today')).toBe(0.9);
+  });
+
+  it('returns 0.9 when "GBP/USD" appears in middle of text', () => {
+    expect(computeRelevanceScore('The GBP/USD pair reached 1.27')).toBe(0.9);
+  });
+
+  it('returns 0.9 when "GBPUSD" appears in text', () => {
+    expect(computeRelevanceScore('GBPUSD forecast bullish')).toBe(0.9);
+  });
+
+  it('returns 0.9 for "EUR/USD" (regression)', () => {
+    expect(computeRelevanceScore('EUR/USD analysis weekly')).toBe(0.9);
+  });
+
+  it('returns 0.9 for "EURUSD" (regression)', () => {
+    expect(computeRelevanceScore('EURUSD price action')).toBe(0.9);
   });
 });
 

@@ -13,14 +13,38 @@ import type { CandleRecord } from './types.js';
 
 /**
  * Parse a Dukascopy timestamp ("DD.MM.YYYY HH:MM:SS.000") into an ISO 8601 string.
- * If the input is already in ISO 8601 format, it is returned unchanged.
+ * Also handles Hitsdata format ("YYYY-MM-DD HH:MM") and full ISO 8601 timestamps.
  */
 export function parseDukascopyTimestamp(raw: string): string {
   const trimmed = raw.trim();
 
-  // Check if already ISO 8601 (starts with YYYY- pattern)
-  if (/^\d{4}-\d{2}-\d{2}/.test(trimmed)) {
+  // Check if already a full ISO 8601 timestamp (with T separator or timezone)
+  if (/^\d{4}-\d{2}-\d{2}T/.test(trimmed)) {
     return trimmed;
+  }
+
+  // Hitsdata format: "YYYY-MM-DD HH:MM" (no seconds) — parse explicitly as UTC
+  const hitsdataMatch = trimmed.match(
+    /^(\d{4})-(\d{2})-(\d{2})\s+(\d{2}):(\d{2})$/
+  );
+  if (hitsdataMatch) {
+    const [, year, month, day, hours, minutes] = hitsdataMatch;
+    const date = new Date(
+      Date.UTC(Number(year), Number(month) - 1, Number(day), Number(hours), Number(minutes), 0, 0)
+    );
+    return date.toISOString();
+  }
+
+  // Hitsdata/generic format: "YYYY-MM-DD HH:MM:SS" (with seconds, no millis) — parse as UTC
+  const isoLikeMatch = trimmed.match(
+    /^(\d{4})-(\d{2})-(\d{2})\s+(\d{2}):(\d{2}):(\d{2})$/
+  );
+  if (isoLikeMatch) {
+    const [, year, month, day, hours, minutes, seconds] = isoLikeMatch;
+    const date = new Date(
+      Date.UTC(Number(year), Number(month) - 1, Number(day), Number(hours), Number(minutes), Number(seconds), 0)
+    );
+    return date.toISOString();
   }
 
   // Dukascopy format: "DD.MM.YYYY HH:MM:SS.mmm"

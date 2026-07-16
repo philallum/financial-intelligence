@@ -205,11 +205,11 @@ describe('Anonymous Forecast - Restricted Fields', () => {
     const supabase = createMockSupabase();
     const app = createApp(supabase);
 
-    const res = await request(app).get('/v1/forecast/GBPUSD');
+    const res = await request(app).get('/v1/forecast/USDJPY');
 
     expect(res.status).toBe(400);
     expect(res.body.error).toBe('asset_not_supported');
-    expect(res.body.message).toContain('GBPUSD');
+    expect(res.body.message).toContain('USDJPY');
     expect(res.body.request_id).toBe('test-request-id-123');
   });
 

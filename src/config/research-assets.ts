@@ -95,6 +95,26 @@ export const RESEARCH_ASSETS: readonly ResearchAsset[] = [
       macro: true,
     },
   },
+  {
+    id: 'gbpusd',
+    symbol: 'GBPUSD',
+    assetClass: AssetClass.FOREX,
+    status: AssetStatus.ACTIVE,
+    processingPriority: 2,
+    pipSize: 0.0001,
+    pricePrecision: 5,
+    marketHours: '24x5',
+    supportedTimeframes: ['4H'],
+    providers: { twelveData: 'GBP/USD' },
+    engines: {
+      fingerprint: true,
+      similarity: true,
+      confidence: true,
+      tradeability: true,
+      sentiment: true,
+      macro: true,
+    },
+  },
 ] as const;
 
 // Execute validation at module initialization

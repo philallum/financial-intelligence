@@ -13,6 +13,7 @@ import {
   type ImportResult,
   type ImportOptions,
   BATCH_SIZE_CANDLES,
+  BOOTSTRAP_BATCH_ID,
   TIMEFRAME,
 } from './types.js';
 
@@ -51,6 +52,7 @@ export async function importCandles(
       low: record.low,
       close: record.close,
       volume: record.volume,
+      batch_id: BOOTSTRAP_BATCH_ID,
     }));
 
     const { error, count } = await supabase
