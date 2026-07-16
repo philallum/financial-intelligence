@@ -58,10 +58,12 @@ class MockUpsertStore {
  * Generates a random ISO 8601 timestamp string for candle records.
  */
 const timestampArb = fc
-  .date({ min: new Date('2020-01-01T00:00:00Z'), max: new Date('2024-12-31T20:00:00Z') })
-  .map((d) => {
+  .integer({
+    min: new Date('2020-01-01T00:00:00Z').getTime(),
+    max: new Date('2024-12-31T20:00:00Z').getTime(),
+  })
+  .map((ms) => {
     // Snap to 4H boundaries to mimic realistic candle timestamps
-    const ms = d.getTime();
     const fourHoursMs = 4 * 60 * 60 * 1000;
     const snapped = new Date(Math.floor(ms / fourHoursMs) * fourHoursMs);
     return snapped.toISOString();

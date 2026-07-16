@@ -8,13 +8,22 @@ import { detectAssetId, computeRelevanceScore } from '../../src/services/integri
 // ─── Generators ─────────────────────────────────────────────────────────────
 
 /**
- * Generates a filler string that does NOT contain any currency codes (uppercase sequences
- * like EUR, JPY, AUD, NZD, CAD, CHF, GBP, USD).
- * Uses only lowercase letters and digits to avoid accidental currency code matches.
+ * Generates a filler string that does NOT contain any currency codes.
+ * Since detectAssetId uppercases the full text before matching, we must also exclude
+ * lowercase versions of currency codes (e.g. "gbp", "eur", "usd", etc.).
  */
-const safeFillerArb = fc.string({ minLength: 0, maxLength: 50 }).map((s) =>
-  s.toLowerCase().replace(/[^a-z0-9 ]/g, ' '),
-);
+const CURRENCY_CODE_PATTERNS = ['usd', 'eur', 'gbp', 'jpy', 'aud', 'nzd', 'cad', 'chf'];
+
+const safeFillerArb = fc.string({ minLength: 0, maxLength: 50 }).map((s) => {
+  let cleaned = s.toLowerCase().replace(/[^a-z0-9 ]/g, ' ');
+  // Remove any accidental currency code substrings (case-insensitive since text is lowercased)
+  for (const code of CURRENCY_CODE_PATTERNS) {
+    while (cleaned.includes(code)) {
+      cleaned = cleaned.replace(code, 'xxx');
+    }
+  }
+  return cleaned;
+});
 
 /**
  * Generates text that contains both "GBP" and "USD" but no other currency codes.

@@ -96,7 +96,7 @@ Onboard GBPUSD as the second currency pair on the Financial Intelligence Platfor
     - Test that GBPUSD uses its own pipSize (0.0001) for calculations
     - _Requirements: 4.1, 4.3, 4.4_
 
-- [~] 6. Checkpoint - Ensure all tests pass
+- [x] 6. Checkpoint - Ensure all tests pass
   - Ensure all tests pass, ask the user if questions arise.
 
 - [x] 7. Export historical data and run bootstrap pipeline
@@ -128,7 +128,7 @@ Onboard GBPUSD as the second currency pair on the Financial Intelligence Platfor
     - Verify `GET /v1/forecast/GBPUSD` returns 200 with forecast data
     - _Requirements: 7.3, 7.4_
 
-- [~] 9. Final checkpoint - Ensure all tests pass
+- [x] 9. Final checkpoint - Ensure all tests pass
   - Ensure all tests pass, ask the user if questions arise.
 
 ## Notes
