@@ -240,6 +240,20 @@
       return hrs > 0 ? `${hrs}h ${mins}m` : `${mins}m`;
     }
 
+    // ─── QUERY BUILDERS ───────────────────────────────────
+    // Mirror logic from dashboard/query-parameterization.ts.
+    // Tables WITHOUT an `asset` column return '' (no filter).
+    // Tables WITH an `asset` column return 'asset=eq.{symbol}'.
+    function buildBatchRunsParams(asset) { return ''; }
+    function buildExecutionTracesParams(asset) { return ''; }
+    function buildSimilarityArchiveParams(asset) { return ''; }
+    function buildDriftAlertsParams(asset) { return ''; }
+    function buildBatchDiagnosticsParams(asset) { return `asset=eq.${asset.symbol}`; }
+    function buildCandleParams(asset) { return `asset=eq.${asset.symbol}`; }
+    function buildResearchForecastsParams(asset) { return `asset=eq.${asset.symbol}`; }
+    function buildNewsParams(asset) { return `or=(currency.eq.${asset.baseCurrency},currency.eq.${asset.quoteCurrency})`; }
+    function buildEventsParams(asset) { return `or=(currency.eq.${asset.baseCurrency},currency.eq.${asset.quoteCurrency})`; }
+
     function sentimentColor(score) {
       if (score > 0.3) return '#00c853';
       if (score > 0.1) return '#66bb6a';
@@ -615,7 +629,8 @@
 
     async function renderBatchDiagnosticsCard() {
       try {
-        const rows = await supabaseQuery('batch_diagnostics', `select=*&asset=eq.${selectedAsset.symbol}&order=updated_at.desc`);
+        const diagFilter = buildBatchDiagnosticsParams(selectedAsset);
+        const rows = await supabaseQuery('batch_diagnostics', `select=*&${diagFilter}&order=updated_at.desc`);
         if (!rows || rows.length === 0) {
           return '<div class="card grid-full"><h2>Batch Diagnostics</h2><p class="no-data">No diagnostics data available</p></div>';
         }
@@ -699,11 +714,13 @@
       try {
         // Query data if not provided (allows testability with mock data)
         if (diagRows === null) {
-          diagRows = await supabaseQuery('batch_diagnostics', `select=*&asset=eq.${selectedAsset.symbol}&order=updated_at.desc&limit=5`).catch(() => []);
+          const diagFilter = buildBatchDiagnosticsParams(selectedAsset);
+          diagRows = await supabaseQuery('batch_diagnostics', `select=*&${diagFilter}&order=updated_at.desc&limit=5`).catch(() => []);
         }
         if (driftRows === null) {
           const sevenDaysAgo = new Date(Date.now() - 7 * 24 * 60 * 60 * 1000).toISOString();
-          driftRows = await supabaseQuery('drift_alerts', `select=*&asset=eq.${selectedAsset.symbol}&detected_at=gte.${sevenDaysAgo}&order=detected_at.desc`).catch(() => []);
+          const driftFilter = buildDriftAlertsParams(selectedAsset);
+          driftRows = await supabaseQuery('drift_alerts', `select=*${driftFilter ? '&' + driftFilter : ''}&detected_at=gte.${sevenDaysAgo}&order=detected_at.desc`).catch(() => []);
         }
 
         // Extract learning_pipeline diagnostics from batch_diagnostics rows
@@ -862,7 +879,7 @@
           fetchForecast(signal).catch(() => null),
           supabaseQuery('raw_candles', `select=timestamp_utc,close&asset=eq.${selectedAsset.symbol}&timeframe=eq.4H&order=timestamp_utc.desc&limit=20`, signal).catch(() => []),
           supabaseQuery('economic_events', `select=name,impact,currency,event_date&or=(currency.eq.${selectedAsset.baseCurrency},currency.eq.${selectedAsset.quoteCurrency})&order=event_date.desc&limit=8`, signal).catch(() => []),
-          supabaseQuery('news_articles', `select=headline,sentiment_hint,relevance_score,published_at&or=(currency.eq.${selectedAsset.baseCurrency},currency.eq.${selectedAsset.quoteCurrency})&sentiment_hint=neq.0&order=published_at.desc&limit=20`, signal).catch(() => []),
+          supabaseQuery('news_articles', `select=headline,sentiment_hint,relevance_score,published_at&or=(currency.eq.${selectedAsset.baseCurrency},currency.eq.${selectedAsset.quoteCurrency})&order=published_at.desc&limit=20`, signal).catch(() => []),
           supabaseQuery('research_forecasts', `select=id,asset,confidence_final,created_at,direction_probabilities,expected_move_pips,forecast_expiry&asset=eq.${selectedAsset.symbol}&order=created_at.desc&limit=15`, signal).catch(() => []),
         ]);
         let html = '';
@@ -920,14 +937,21 @@
       showLoading('developer-content');
       const container = document.getElementById('developer-content');
       try {
+        // Build asset filter params — returns '' for tables without asset column
+        const batchRunsFilter = buildBatchRunsParams(selectedAsset);
+        const tracesFilter = buildExecutionTracesParams(selectedAsset);
+        const similarityFilter = buildSimilarityArchiveParams(selectedAsset);
+        const newsFilter = buildNewsParams(selectedAsset);
+        const eventsFilter = buildEventsParams(selectedAsset);
+
         const [forecast, batchRuns, traces, similarity, articles, events, errorTraces] = await Promise.all([
           fetchForecast(signal).catch(() => null),
-          supabaseQuery('batch_runs', `select=*&asset=eq.${selectedAsset.symbol}&order=created_at.desc&limit=10`, signal).catch(() => []),
-          supabaseQuery('execution_traces', `select=engine_name,engine_version,status,execution_time_ms,timestamp_utc,batch_id,error_detail&asset=eq.${selectedAsset.symbol}&order=timestamp_utc.desc&limit=10`, signal).catch(() => []),
-          supabaseQuery('research_similarity_archive', `select=match_fingerprint_id,similarity_score,rank,layer_breakdown,match_explanation&asset=eq.${selectedAsset.symbol}&order=rank.asc&limit=10`, signal).catch(() => []),
-          supabaseQuery('news_articles', `select=headline,sentiment_hint,relevance_score,published_at&or=(currency.eq.${selectedAsset.baseCurrency},currency.eq.${selectedAsset.quoteCurrency})&sentiment_hint=neq.0&order=published_at.desc&limit=20`, signal).catch(() => []),
-          supabaseQuery('economic_events', `select=name,impact,currency,event_date&or=(currency.eq.${selectedAsset.baseCurrency},currency.eq.${selectedAsset.quoteCurrency})&order=event_date.desc&limit=10`, signal).catch(() => []),
-          supabaseQuery('execution_traces', `select=engine_name,error_detail,timestamp_utc&asset=eq.${selectedAsset.symbol}&status=eq.error&order=timestamp_utc.desc&limit=10`, signal).catch(() => []),
+          supabaseQuery('batch_runs', `select=*${batchRunsFilter ? '&' + batchRunsFilter : ''}&order=created_at.desc&limit=10`, signal).catch(() => []),
+          supabaseQuery('execution_traces', `select=engine_name,engine_version,status,execution_time_ms,timestamp_utc,batch_id,error_detail${tracesFilter ? '&' + tracesFilter : ''}&order=timestamp_utc.desc&limit=10`, signal).catch(() => []),
+          supabaseQuery('research_similarity_archive', `select=match_fingerprint_id,similarity_score,rank,layer_breakdown,match_explanation${similarityFilter ? '&' + similarityFilter : ''}&order=rank.asc&limit=10`, signal).catch(() => []),
+          supabaseQuery('news_articles', `select=headline,sentiment_hint,relevance_score,published_at&${newsFilter}&order=published_at.desc&limit=20`, signal).catch(() => []),
+          supabaseQuery('economic_events', `select=name,impact,currency,event_date&${eventsFilter}&order=event_date.desc&limit=10`, signal).catch(() => []),
+          supabaseQuery('execution_traces', `select=engine_name,error_detail,timestamp_utc&status=eq.error&order=timestamp_utc.desc&limit=10`, signal).catch(() => []),
         ]);
         const batchRun = batchRuns?.[0] || null;
         let html = '';

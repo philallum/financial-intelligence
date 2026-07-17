@@ -352,17 +352,18 @@ describe('RapidAPI Marketplace Integration - End-to-End', () => {
       expect(res.body.meta).toHaveProperty('note');
     });
 
-    it('returns 401 for non-EURUSD asset with invalid proxy-secret and no API key', async () => {
+    it('returns anonymous 200 for non-EURUSD asset with invalid proxy-secret and no API key (all active assets are anonymous-eligible)', async () => {
       const res = await request(app)
         .get('/v1/forecast/GBPUSD')
         .set('X-RapidAPI-Proxy-Secret', 'wrong-secret')
         .set('X-RapidAPI-Subscription', 'PRO')
         .set('X-RapidAPI-User', 'attacker');
 
-      // Non-EURUSD is not anonymous-eligible, falls through to direct auth
-      // No API key → 401
-      expect(res.status).toBe(401);
-      expect(res.body.error).toBe('unauthorized');
+      // GBPUSD is now anonymous-eligible (fix broadened access to all 6-char assets)
+      // With invalid secret, isRapidApiRequest returns false → falls through to anonymous
+      expect(res.status).toBe(200);
+      // Anonymous response has a meta.note (proving it's NOT marketplace access)
+      expect(res.body.meta).toHaveProperty('note');
     });
   });
 

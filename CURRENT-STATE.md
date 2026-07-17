@@ -218,6 +218,188 @@ Fail-forward semantics: each stage runs independently, errors are accumulated.
 19. ✓ OpenAPI spec auto-generation from registry at build time
 20. ✓ Topology similarity weight = 0.10 (actively contributing to scoring)
 
+## Pipeline Computation Reference
+
+This section documents how each pipeline stage computes its output values, what those values mean, and where the tuneable parameters live. The goal is to provide a foundation for systematic evaluation of whether each computation is contributing positively to prediction accuracy — and where adjustments might improve results over time.
+
+### Computation Flow (Value Chain)
+
+```
+OHLC candle
+    │
+    ├─→ Fingerprint Engine → 5-layer state vector (62 dimensions total)
+    │       ├─ L1: Market Structure (16d) — price geometry
+    │       ├─ L2: Volatility Profile (12d) — movement intensity
+    │       ├─ L3: Liquidity Field (20d) — spatial density
+    │       ├─ L4: Macro Context (8d) — from Macro Engine
+    │       └─ L5: Sentiment Pressure (6d) — from Sentiment Engine
+    │
+    ├─→ Sentiment Engine → 6-dim vector (L5 layer input)
+    ├─→ Macro Context Engine → 8-dim vector (L4 layer input)
+    ├─→ Topology Engine → 40-dim S/R vector + 20 structural levels
+    ├─→ Regime Engine v2 → regime classification (9 types)
+    │
+    ▼
+Similarity Engine → top 50 historical matches (weighted cosine)
+    │
+    ▼
+Outcome Engine → empirical return distribution from matches
+    │
+    ▼
+Forecast Engine → direction probabilities (UP/DOWN/FLAT) + expected move
+    │
+    ▼
+Confidence Engine v2 → calibration-adjusted confidence score [0, 1]
+    │
+    ▼
+Tradeability Engine (runtime) → GO / CONDITIONAL / NO_GO
+```
+
+### Stage-by-Stage Computation Details
+
+#### 1. Sentiment Engine
+
+| Aspect | Detail |
+|--------|--------|
+| **Input** | News articles (headline, sentiment_hint [-1,1], relevance_score, published_at) |
+| **Output** | 6-dim vector [0,1]: aggregate_sentiment, bullish_pressure, bearish_pressure, article_volume, sentiment_dispersion, momentum |
+| **Core Formula** | Weighted mean of sentiment_hint with exponential time decay (half-life = 8h) × relevance_score, mapped from [-1,1] to [0,1] |
+| **Tuneable Parameters** | Decay half-life (8h), bullish/bearish threshold (±0.2), volume cap (50 articles), confidence blend threshold (3 articles) |
+| **What "good" looks like** | Dispersion separates from 0.5 during trending markets; momentum captures directional shift before price moves |
+| **Known weakness** | sentiment_hint is mostly 0 from providers — real discrimination depends on LLM-based scoring |
+
+#### 2. Macro Context Engine
+
+| Aspect | Detail |
+|--------|--------|
+| **Input** | Economic calendar events (name, impact, currency, event_date, actual, estimate, previous) |
+| **Output** | 8-dim vector [0,1]: event_proximity, surprise_factor, rate_differential, high_impact_count, medium_impact_count, event_density, upcoming_intensity, composite_macro_state |
+| **Core Formula** | Proximity = 1 - (hours_to_event / 24); Surprise = (actual - estimate) / |estimate|, impact-weighted; Composite = weighted sum of 7 dimensions (weights: proximity 0.25, surprise 0.20, rate_diff 0.15, high_count 0.15, upcoming 0.15, density 0.05, medium_count 0.05) |
+| **Tuneable Parameters** | Proximity decay window (24h), composite weights, event count normalisers (/5 for high, /10 for medium, /20 for density) |
+| **What "good" looks like** | Elevated composite before NFP, FOMC; proximity pressure spikes correlate with increased volatility |
+| **Known weakness** | Only 13 events in DB; surprise_factor requires actual values that arrive post-event |
+
+#### 3. Fingerprint Engine (5 Layers)
+
+| Layer | Dimensions | Key Computations | Meaning |
+|-------|-----------|-----------------|---------|
+| L1: Market Structure | 16 | Body position, body size, shadows, direction, trend strength, impulse ratio, rejection ratio, close position, symmetry, net return (sigmoid-mapped), range norm, momentum proxy | "What shape is this candle and what does it imply about directional commitment?" |
+| L2: Volatility Profile | 12 | ATR proxy (/100 pips), body-to-range efficiency, expansion (/50 pips), contraction, speed proxy, vol regime score | "How much energy is in this move and is volatility expanding or contracting?" |
+| L3: Liquidity Field | 20 | 20-bin spatial density field relative to current candle range — encodes S/R pressure distribution | "Where is the structural pressure around current price?" |
+| L4: Macro Context | 8 | Direct pass-through of Macro Context Engine vector | "What's the macro environment around this candle?" |
+| L5: Sentiment Pressure | 6 | Direct pass-through of Sentiment Engine vector | "What's the news-driven pressure around this candle?" |
+
+**Tuneable Parameters**: PIP_DIVISOR (0.0001), volatility thresholds (30/70 pips for LOW/HIGH), trend ratio threshold (0.3), reference pips for normalisation (50, 100).
+
+#### 4. Topology Engine
+
+| Aspect | Detail |
+|--------|--------|
+| **Input** | 30–120 most recent OHLC candles |
+| **Output** | Up to 20 structural levels (support/resistance/flip_zone) + 40-dim normalised vector |
+| **Core Formula** | Swing detection → cluster at 5-pip tolerance → count interactions (touches, rejections, breakouts within 3-pip threshold) → rank by score = rejections×2 + touches - breakouts → classify type → strength = rejections/touches → importance = strength × (1/distance), normalised |
+| **Tuneable Parameters** | Cluster tolerance (5 pips), interaction threshold (3 pips), max levels (20), scoring weights (rejection×2, touch×1, breakout×-1) |
+| **What "good" looks like** | High-strength levels near current price predict bounces; breakout levels predict continuation |
+| **Contribution to score** | Topology vector blended into similarity at weight 0.10 |
+
+#### 5. Regime Engine v2
+
+| Aspect | Detail |
+|--------|--------|
+| **Input** | Fingerprint state_layers (L1, L2) + extended features (rolling_trend, atr_percentile, vol_regime_score, macro_state, sentiment_summary) |
+| **Output** | Primary regime + up to 2 secondary regimes with relevance scores |
+| **Core Formula** | 9 rule sets with explicit thresholds evaluated independently; additive scoring per regime; highest score wins. Tie-break: alphabetical |
+| **Key Thresholds** | Trend: strength>0.55, impulse>0.5; Ranging: strength<0.35, expansion<0.4; Expansion: indicator>0.65, ATR>0.6; Breakout: impulse>0.6, speed>0.6, expansion>0.55 |
+| **What "good" looks like** | Regime classification should correlate with different outcome distributions — trending markets should produce more directional outcomes |
+| **Impact** | Regime determines the similarity weight matrix (which layers matter most for finding similar history) |
+
+#### 6. Similarity Engine
+
+| Aspect | Detail |
+|--------|--------|
+| **Input** | Query fingerprint + pre-filtered candidate corpus (same asset, timeframe, regime) |
+| **Output** | Top 50 matches with per-layer similarity breakdown and composite score [0,1] |
+| **Core Formula** | Per-layer similarity (cosine for L1-L3, L2/euclidean→sigmoid for L4-L5) → regime-weighted linear combination → optional topology blending (10%) → ranked by composite |
+| **Tuneable Parameters** | Regime weight matrices (frozen per regime type, e.g., LOW_RANGING: structure=0.40, liquidity=0.30, volatility=0.15, macro=0.10, sentiment=0.05), topology weight (0.10), candidate pool size (500), top-N (50) |
+| **What "good" looks like** | Higher mean similarity → tighter outcome distribution → higher confidence; matches from same regime → better prediction |
+| **Key insight for tuning** | The weight matrices determine which historical conditions we consider "similar" — if predictions are poor in a given regime, the weights for that regime may need adjustment |
+
+#### 7. Outcome Engine
+
+| Aspect | Detail |
+|--------|--------|
+| **Input** | Forward 4H returns (in pips) from the 50 matched fingerprints |
+| **Output** | Direction probabilities, mean/median return, std_dev, risk range (p10/p50/p90) |
+| **Core Formula** | FLAT: |R| ≤ 2 pips; UP: R > +2; DOWN: R < -2. Equal weight per match (1/N). Direction probability = count_in_direction / N |
+| **Tuneable Parameters** | FLAT_THRESHOLD (2 pips — this is critical), equal weighting (could be changed to similarity-weighted) |
+| **What "good" looks like** | Concentrated distributions (low std_dev) with clear directional majority → higher accuracy predictions |
+| **Key insight for tuning** | The FLAT threshold significantly affects prediction distribution. A higher threshold = more FLAT predictions; lower = more directional. Should this be volatility-normalised? |
+
+#### 8. Forecast Engine
+
+| Aspect | Detail |
+|--------|--------|
+| **Input** | OutcomeDistribution from Outcome Engine |
+| **Output** | Directional probabilities (UP, DOWN, FLAT) summing to 1.00; expected_move_pips |
+| **Core Formula** | Direct pass-through of outcome direction_probability normalised to 2dp. Residual from rounding applied to largest probability. Expected move = mean_return |
+| **Tuneable Parameters** | None — this is a thin normalisation layer |
+| **What "good" looks like** | Dominant probability clearly above others; expected_move_pips consistent with direction |
+
+#### 9. Confidence Engine v2
+
+| Aspect | Detail |
+|--------|--------|
+| **Input** | ConfidenceInput (probabilities, similarity metrics, distribution shape, regime metadata) + frozen CalibrationParameters |
+| **Output** | confidence_final [0, 1] = calibration_adjusted_base × regime_accuracy_modifier × sample_density_modifier |
+| **Core Formula** | Base = bucket success rate (10 buckets by max probability concentration); Regime modifier = observed accuracy for this regime; Sample density = accuracy at this sample size from density curve |
+| **Tuneable Parameters** | CalibrationParameters (frozen per engine version): bucket_success_rates, regime_accuracy record, sample_density_curve, global_fallback (base 0.5, regime 0.5, sample 0.5). Minimum 30 forecasts per grouping before group-specific params used |
+| **What "good" looks like** | Higher confidence → higher accuracy (calibration). Forecasts with confidence > 0.6 should outperform those below 0.4 |
+| **Key insight for tuning** | These parameters are derived from the Evaluation Engine's historical accuracy data. As more forecasts are evaluated, these should be updated to reflect observed performance |
+
+#### 10. Tradeability Engine (Runtime)
+
+| Aspect | Detail |
+|--------|--------|
+| **Input** | Forecast (batch-computed) + live: spread, session, liquidity proxy, news risk flag |
+| **Output** | tradeability_score [0, 1], label (GO/CONDITIONAL/NO_GO) |
+| **Core Formula** | score = S_static × D_dynamic; S_static = confidence_final; D_dynamic = spread_factor × session_factor × liquidity_factor × news_factor |
+| **Tuneable Parameters** | Label thresholds (GO > 0.75, CONDITIONAL ≥ 0.45); Spread factors (low=1.0, medium=0.7, high=0.3); Session factors (London=1.0, NY=0.8, Asia=0.5); Liquidity factors (high=1.0, medium=0.75, low=0.5); News (clear=1.0, blocked=0.0) |
+| **What "good" looks like** | GO predictions deliver positive expected value; NO_GO correctly identifies conditions where predictions are unreliable |
+
+### Proposed: Computation Calibration Process
+
+The platform currently retrains the ML service, but the deterministic engines above rely on fixed thresholds and weights that were set during development. A systematic process for evaluating and adjusting these would improve prediction quality over time.
+
+#### What to Track (per stage, per regime, per asset)
+
+1. **Stage contribution analysis** — For each evaluated forecast, decompose the final score into per-stage contributions. Which layer of similarity contributed most? Did macro/sentiment add signal or noise?
+2. **Regime accuracy breakdown** — Track direction accuracy per regime type. If "expansion" regime predictions are 35% accurate but "trend" is 65%, the expansion similarity weights may need adjustment.
+3. **Threshold sensitivity** — Periodically evaluate: what if FLAT_THRESHOLD was 3 instead of 2? What if topology weight was 0.15 instead of 0.10? Run counterfactual analysis against the research archive.
+4. **Layer signal-to-noise** — Compute correlation between each fingerprint layer's similarity and actual outcome accuracy. If L5 (sentiment) similarity shows no correlation with better outcomes, reduce its weight.
+5. **Confidence calibration drift** — Monitor whether confidence scores remain well-calibrated over rolling 30-day windows. If 70% confidence predictions are only 50% accurate, recalibrate.
+
+#### Where Parameters Live
+
+| Engine | Parameter Location | Update Process |
+|--------|-------------------|----------------|
+| Sentiment | Hardcoded in engine file | Code change + deploy |
+| Macro Context | COMPOSITE_WEIGHTS in engine file | Code change + deploy |
+| Fingerprint | Constants at top of engine file | Code change + deploy |
+| Topology | Constants (CLUSTER_TOLERANCE_PIPS, etc.) | Code change + deploy |
+| Regime v2 | Threshold constants in engine file | Code change + deploy |
+| Similarity | REGIME_WEIGHT_MATRICES + TOPOLOGY_SIMILARITY_WEIGHT in constants.ts | Code change + deploy |
+| Outcome | FLAT_THRESHOLD in constants.ts | Code change + deploy |
+| Confidence v2 | CalibrationParameters in engine_versions.config DB table | DB update (versioned) |
+| Tradeability | TRADEABILITY_CONFIG in engine file | Code change + deploy |
+
+#### Recommended Evaluation Cadence
+
+- **Weekly**: Review direction accuracy by regime, identify underperforming regimes
+- **Monthly**: Run threshold sensitivity analysis against research archive (counterfactual backtest)
+- **Per 100 evaluated forecasts**: Update CalibrationParameters for Confidence Engine v2
+- **Per asset onboarding**: Validate that weight matrices perform for the new asset's characteristics
+- **Quarterly**: Full pipeline contribution analysis — determine if any layer should have its weight increased/decreased
+
 ## Known Limitations / Gaps
 
 ### Prediction Quality

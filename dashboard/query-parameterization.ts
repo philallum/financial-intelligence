@@ -71,19 +71,21 @@ export function buildResearchForecastsParams(asset: AssetConfig): string {
 }
 
 /**
- * Builds the query params for batch_runs filtered by asset symbol.
- * Pattern: `asset=eq.${asset.symbol}`
+ * Builds the query params for batch_runs.
+ * The batch_runs table does not have an `asset` column, so no asset filter is applied.
+ * Returns an empty string.
  */
 export function buildBatchRunsParams(asset: AssetConfig): string {
-  return `asset=eq.${asset.symbol}`;
+  return '';
 }
 
 /**
- * Builds the query params for execution_traces filtered by asset symbol.
- * Pattern: `asset=eq.${asset.symbol}`
+ * Builds the query params for execution_traces.
+ * The execution_traces table does not have an `asset` column, so no asset filter is applied.
+ * Returns an empty string.
  */
 export function buildExecutionTracesParams(asset: AssetConfig): string {
-  return `asset=eq.${asset.symbol}`;
+  return '';
 }
 
 /**
@@ -95,17 +97,19 @@ export function buildBatchDiagnosticsParams(asset: AssetConfig): string {
 }
 
 /**
- * Builds the query params for drift_alerts filtered by asset symbol.
- * Pattern: `asset=eq.${asset.symbol}`
+ * Builds the query params for drift_alerts.
+ * The drift_alerts table does not have an `asset` column, so no asset filter is applied.
+ * Returns an empty string.
  */
 export function buildDriftAlertsParams(asset: AssetConfig): string {
-  return `asset=eq.${asset.symbol}`;
+  return '';
 }
 
 /**
- * Builds the query params for research_similarity_archive filtered by asset symbol.
- * Pattern: `asset=eq.${asset.symbol}`
+ * Builds the query params for research_similarity_archive.
+ * The research_similarity_archive table does not have an `asset` column, so no asset filter is applied.
+ * Returns an empty string.
  */
 export function buildSimilarityArchiveParams(asset: AssetConfig): string {
-  return `asset=eq.${asset.symbol}`;
+  return '';
 }

@@ -32,36 +32,36 @@ const GBPUSD: AssetConfig = ACTIVE_ASSETS[1];
 
 describe('Developer View: asset-scoped query parameterization', () => {
   describe('buildBatchRunsParams (Requirement 6.1)', () => {
-    it('returns asset=eq.EURUSD for the EURUSD asset', () => {
+    it('returns empty string for EURUSD (batch_runs has no asset column)', () => {
       const params = buildBatchRunsParams(EURUSD);
-      expect(params).toBe('asset=eq.EURUSD');
+      expect(params).toBe('');
     });
 
-    it('returns asset=eq.GBPUSD for the GBPUSD asset', () => {
+    it('returns empty string for GBPUSD (batch_runs has no asset column)', () => {
       const params = buildBatchRunsParams(GBPUSD);
-      expect(params).toBe('asset=eq.GBPUSD');
+      expect(params).toBe('');
     });
 
-    it('includes the asset filter pattern asset=eq.{symbol}', () => {
+    it('does not contain asset filter (table has no asset column)', () => {
       const params = buildBatchRunsParams(EURUSD);
-      expect(params).toMatch(/^asset=eq\.[A-Z]{6}$/);
+      expect(params).not.toContain('asset=eq.');
     });
   });
 
   describe('buildExecutionTracesParams (Requirement 6.2)', () => {
-    it('returns asset=eq.EURUSD for the EURUSD asset', () => {
+    it('returns empty string for EURUSD (execution_traces has no asset column)', () => {
       const params = buildExecutionTracesParams(EURUSD);
-      expect(params).toBe('asset=eq.EURUSD');
+      expect(params).toBe('');
     });
 
-    it('returns asset=eq.GBPUSD for the GBPUSD asset', () => {
+    it('returns empty string for GBPUSD (execution_traces has no asset column)', () => {
       const params = buildExecutionTracesParams(GBPUSD);
-      expect(params).toBe('asset=eq.GBPUSD');
+      expect(params).toBe('');
     });
 
-    it('includes the asset filter pattern asset=eq.{symbol}', () => {
+    it('does not contain asset filter (table has no asset column)', () => {
       const params = buildExecutionTracesParams(GBPUSD);
-      expect(params).toMatch(/^asset=eq\.[A-Z]{6}$/);
+      expect(params).not.toContain('asset=eq.');
     });
   });
 
@@ -83,36 +83,36 @@ describe('Developer View: asset-scoped query parameterization', () => {
   });
 
   describe('buildDriftAlertsParams (Requirement 6.4)', () => {
-    it('returns asset=eq.EURUSD for the EURUSD asset', () => {
+    it('returns empty string for EURUSD (drift_alerts has no asset column)', () => {
       const params = buildDriftAlertsParams(EURUSD);
-      expect(params).toBe('asset=eq.EURUSD');
+      expect(params).toBe('');
     });
 
-    it('returns asset=eq.GBPUSD for the GBPUSD asset', () => {
+    it('returns empty string for GBPUSD (drift_alerts has no asset column)', () => {
       const params = buildDriftAlertsParams(GBPUSD);
-      expect(params).toBe('asset=eq.GBPUSD');
+      expect(params).toBe('');
     });
 
-    it('includes the asset filter pattern asset=eq.{symbol}', () => {
+    it('does not contain asset filter (table has no asset column)', () => {
       const params = buildDriftAlertsParams(GBPUSD);
-      expect(params).toMatch(/^asset=eq\.[A-Z]{6}$/);
+      expect(params).not.toContain('asset=eq.');
     });
   });
 
   describe('buildSimilarityArchiveParams (Requirement 6.4)', () => {
-    it('returns asset=eq.EURUSD for the EURUSD asset', () => {
+    it('returns empty string for EURUSD (similarity_archive has no asset column)', () => {
       const params = buildSimilarityArchiveParams(EURUSD);
-      expect(params).toBe('asset=eq.EURUSD');
+      expect(params).toBe('');
     });
 
-    it('returns asset=eq.GBPUSD for the GBPUSD asset', () => {
+    it('returns empty string for GBPUSD (similarity_archive has no asset column)', () => {
       const params = buildSimilarityArchiveParams(GBPUSD);
-      expect(params).toBe('asset=eq.GBPUSD');
+      expect(params).toBe('');
     });
 
-    it('includes the asset filter pattern asset=eq.{symbol}', () => {
+    it('does not contain asset filter (table has no asset column)', () => {
       const params = buildSimilarityArchiveParams(EURUSD);
-      expect(params).toMatch(/^asset=eq\.[A-Z]{6}$/);
+      expect(params).not.toContain('asset=eq.');
     });
   });
 });
@@ -137,50 +137,41 @@ describe('Developer View: empty-state messages', () => {
      * - Empty similarity rendered by renderSimilarityCard([])
      */
 
-    it('batch_runs query for EURUSD returns the correct filter to scope results', () => {
-      // When the query returns 0 results with this filter, the dashboard shows:
-      // "No batch runs available for EURUSD"
+    it('batch_runs query returns empty string (table has no asset column)', () => {
+      // batch_runs has no asset column; query fetches all rows regardless of asset
       const params = buildBatchRunsParams(EURUSD);
-      expect(params).toBe('asset=eq.EURUSD');
+      expect(params).toBe('');
     });
 
-    it('batch_runs query for GBPUSD returns the correct filter to scope results', () => {
-      // When the query returns 0 results with this filter, the dashboard shows:
-      // "No batch runs available for GBPUSD"
-      const params = buildBatchRunsParams(GBPUSD);
-      expect(params).toBe('asset=eq.GBPUSD');
-    });
-
-    it('execution_traces query for EURUSD returns the correct filter to scope results', () => {
-      // When the query returns 0 results with this filter, the dashboard shows:
-      // "No execution traces available for EURUSD"
+    it('execution_traces query returns empty string (table has no asset column)', () => {
+      // execution_traces has no asset column; query fetches all rows regardless of asset
       const params = buildExecutionTracesParams(EURUSD);
-      expect(params).toBe('asset=eq.EURUSD');
+      expect(params).toBe('');
     });
 
-    it('execution_traces query for GBPUSD returns the correct filter to scope results', () => {
-      // When the query returns 0 results with this filter, the dashboard shows:
-      // "No execution traces available for GBPUSD"
-      const params = buildExecutionTracesParams(GBPUSD);
-      expect(params).toBe('asset=eq.GBPUSD');
+    it('buildBatchDiagnosticsParams returns distinct asset filters for different assets', () => {
+      // Only buildBatchDiagnosticsParams has a valid asset column and returns distinct values
+      const eurusdParams = buildBatchDiagnosticsParams(EURUSD);
+      const gbpusdParams = buildBatchDiagnosticsParams(GBPUSD);
+      expect(eurusdParams).not.toBe(gbpusdParams);
+      expect(eurusdParams).toContain('EURUSD');
+      expect(gbpusdParams).toContain('GBPUSD');
     });
 
-    it('all developer view query builders return distinct asset filters for different assets', () => {
-      // This ensures that EURUSD and GBPUSD data are never mixed
-      const builders = [
+    it('builders for tables without asset column return empty strings for all assets', () => {
+      // These four builders return empty strings regardless of asset (no asset column)
+      const noAssetBuilders = [
         buildBatchRunsParams,
         buildExecutionTracesParams,
-        buildBatchDiagnosticsParams,
         buildDriftAlertsParams,
         buildSimilarityArchiveParams,
       ];
 
-      for (const builder of builders) {
+      for (const builder of noAssetBuilders) {
         const eurusdParams = builder(EURUSD);
         const gbpusdParams = builder(GBPUSD);
-        expect(eurusdParams).not.toBe(gbpusdParams);
-        expect(eurusdParams).toContain('EURUSD');
-        expect(gbpusdParams).toContain('GBPUSD');
+        expect(eurusdParams).toBe('');
+        expect(gbpusdParams).toBe('');
       }
     });
   });

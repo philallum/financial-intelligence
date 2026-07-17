@@ -90,13 +90,13 @@ function extractApiKey(req: Request): string | null {
 
 /**
  * Checks if the request path is eligible for anonymous access.
- * Only GET /v1/forecast/EURUSD is allowed without authentication.
+ * GET /v1/forecast/{any active 6-char asset symbol} is allowed without authentication.
  * Uses req.originalUrl to handle mounted middleware (where req.path is relative).
  */
 function isAnonymousEligible(req: Request): boolean {
   if (req.method !== 'GET') return false;
   const path = (req.originalUrl ?? req.path).toLowerCase().split('?')[0];
-  return path === '/v1/forecast/eurusd';
+  return /^\/v1\/forecast\/[a-z]{6}$/.test(path);
 }
 
 /**

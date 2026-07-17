@@ -426,14 +426,24 @@ describe('Integration: Full Middleware Chain', () => {
       expect(res.headers['x-request-id']).toBeDefined();
     });
 
-    it('non-EURUSD assets require authentication', async () => {
+    it('non-forecast paths require authentication', async () => {
       const supabase = createIntegrationSupabase();
       const app = createApp({ supabase });
 
-      // /v1/forecast/GBPUSD without auth → 401 (not anonymous-eligible)
-      const res = await request(app).get('/v1/forecast/GBPUSD');
+      // /v1/state/GBPUSD without auth → 401 (not anonymous-eligible)
+      const res = await request(app).get('/v1/state/GBPUSD');
 
       expect(res.status).toBe(401);
+    });
+
+    it('all active assets are anonymous-eligible via GET /v1/forecast/{asset}', async () => {
+      const supabase = createIntegrationSupabase();
+      const app = createApp({ supabase });
+
+      // GBPUSD is now anonymous-eligible (fix broadened access to all 6-char asset symbols)
+      const res = await request(app).get('/v1/forecast/GBPUSD');
+
+      expect(res.status).toBe(200);
     });
 
     it('case-insensitive asset matching for anonymous access', async () => {

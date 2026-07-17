@@ -179,46 +179,48 @@ describe('Property 1: Query parameterization with selected asset', () => {
     });
   });
 
-  describe('Batch runs query params contain the asset symbol', () => {
-    it('for any active asset, batch runs params include asset=eq.{symbol}', () => {
+  describe('Batch runs query params do not contain asset filter (table has no asset column)', () => {
+    it('for any active asset, batch runs params return empty string', () => {
       fc.assert(
         fc.property(activeAssetArb, (asset) => {
           const params = buildBatchRunsParams(asset);
-          expect(params).toContain(asset.symbol);
-          expect(params).toBe(`asset=eq.${asset.symbol}`);
+          expect(params).toBe('');
+          expect(params).not.toContain('asset=eq.');
         }),
         { numRuns: 100 },
       );
     });
 
-    it('for any arbitrary asset, batch runs params include the symbol', () => {
+    it('for any arbitrary asset, batch runs params return empty string', () => {
       fc.assert(
         fc.property(assetConfigArb, (asset) => {
           const params = buildBatchRunsParams(asset);
-          expect(params).toContain(asset.symbol);
+          expect(params).toBe('');
+          expect(params).not.toContain('asset=eq.');
         }),
         { numRuns: 100 },
       );
     });
   });
 
-  describe('Execution traces query params contain the asset symbol', () => {
-    it('for any active asset, execution traces params include asset=eq.{symbol}', () => {
+  describe('Execution traces query params do not contain asset filter (table has no asset column)', () => {
+    it('for any active asset, execution traces params return empty string', () => {
       fc.assert(
         fc.property(activeAssetArb, (asset) => {
           const params = buildExecutionTracesParams(asset);
-          expect(params).toContain(asset.symbol);
-          expect(params).toBe(`asset=eq.${asset.symbol}`);
+          expect(params).toBe('');
+          expect(params).not.toContain('asset=eq.');
         }),
         { numRuns: 100 },
       );
     });
 
-    it('for any arbitrary asset, execution traces params include the symbol', () => {
+    it('for any arbitrary asset, execution traces params return empty string', () => {
       fc.assert(
         fc.property(assetConfigArb, (asset) => {
           const params = buildExecutionTracesParams(asset);
-          expect(params).toContain(asset.symbol);
+          expect(params).toBe('');
+          expect(params).not.toContain('asset=eq.');
         }),
         { numRuns: 100 },
       );
@@ -248,46 +250,48 @@ describe('Property 1: Query parameterization with selected asset', () => {
     });
   });
 
-  describe('Drift alerts query params contain the asset symbol', () => {
-    it('for any active asset, drift alerts params include asset=eq.{symbol}', () => {
+  describe('Drift alerts query params do not contain asset filter (table has no asset column)', () => {
+    it('for any active asset, drift alerts params return empty string', () => {
       fc.assert(
         fc.property(activeAssetArb, (asset) => {
           const params = buildDriftAlertsParams(asset);
-          expect(params).toContain(asset.symbol);
-          expect(params).toBe(`asset=eq.${asset.symbol}`);
+          expect(params).toBe('');
+          expect(params).not.toContain('asset=eq.');
         }),
         { numRuns: 100 },
       );
     });
 
-    it('for any arbitrary asset, drift alerts params include the symbol', () => {
+    it('for any arbitrary asset, drift alerts params return empty string', () => {
       fc.assert(
         fc.property(assetConfigArb, (asset) => {
           const params = buildDriftAlertsParams(asset);
-          expect(params).toContain(asset.symbol);
+          expect(params).toBe('');
+          expect(params).not.toContain('asset=eq.');
         }),
         { numRuns: 100 },
       );
     });
   });
 
-  describe('Similarity archive query params contain the asset symbol', () => {
-    it('for any active asset, similarity archive params include asset=eq.{symbol}', () => {
+  describe('Similarity archive query params do not contain asset filter (table has no asset column)', () => {
+    it('for any active asset, similarity archive params return empty string', () => {
       fc.assert(
         fc.property(activeAssetArb, (asset) => {
           const params = buildSimilarityArchiveParams(asset);
-          expect(params).toContain(asset.symbol);
-          expect(params).toBe(`asset=eq.${asset.symbol}`);
+          expect(params).toBe('');
+          expect(params).not.toContain('asset=eq.');
         }),
         { numRuns: 100 },
       );
     });
 
-    it('for any arbitrary asset, similarity archive params include the symbol', () => {
+    it('for any arbitrary asset, similarity archive params return empty string', () => {
       fc.assert(
         fc.property(assetConfigArb, (asset) => {
           const params = buildSimilarityArchiveParams(asset);
-          expect(params).toContain(asset.symbol);
+          expect(params).toBe('');
+          expect(params).not.toContain('asset=eq.');
         }),
         { numRuns: 100 },
       );

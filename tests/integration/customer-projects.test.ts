@@ -239,7 +239,7 @@ function createApiKeysTableMock(store: ReturnType<typeof createInMemoryStore>) {
 function createMockReq(overrides: Partial<Request> = {}): Request {
   return {
     method: 'GET',
-    path: '/v1/forecast/GBPUSD',
+    path: '/v1/positions',
     headers: {},
     socket: { remoteAddress: '127.0.0.1' },
     ...overrides,
