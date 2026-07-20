@@ -97,7 +97,23 @@ export function renderContinuousLearningCard(
     html += `<div class="health-card">`;
     html += `<div class="hc-title">Calibration</div>`;
     html += `<div class="hc-status"><span class="status-dot ${calDot}"></span>${calApplied ? 'Applied' : '⚠️ Not Applied'}</div>`;
-    html += `<div class="hc-detail">${latest?.calibration_model_version ?? 'No model'}</div>`;
+    // Differentiate failure reasons with actionable messages
+    let calibrationDetail: string;
+    if (calApplied) {
+      calibrationDetail = latest?.calibration_model_version ?? 'No model';
+    } else {
+      const failureReason = latest?.failure_reason ?? null;
+      if (failureReason === null || failureReason === 'ml_service_url_not_configured') {
+        calibrationDetail = 'ML service URL not configured — set ML_SERVICE_URL in .env';
+      } else if (failureReason === 'ml_service_unavailable') {
+        calibrationDetail = 'ML service not running — start with: docker run -p 5000:5000 fip-ml';
+      } else if (failureReason.includes('calibration_failed')) {
+        calibrationDetail = 'Calibration model not yet trained';
+      } else {
+        calibrationDetail = failureReason;
+      }
+    }
+    html += `<div class="hc-detail">${calibrationDetail}</div>`;
     html += `</div>`;
 
     // SHAP status

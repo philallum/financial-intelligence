@@ -752,7 +752,18 @@
             calibrationStatus = 'Not Applied';
             calibrationDot = 'red';
             calibrationWarning = true;
-            calibrationDetail = latest.failure_reason || 'Calibration skipped';
+            // Differentiate failure reasons with actionable messages
+            if (latest.failure_reason === null || latest.failure_reason === 'ml_service_url_not_configured') {
+              calibrationDetail = 'ML service URL not configured — set ML_SERVICE_URL in .env';
+            } else if (latest.failure_reason === 'ml_service_unavailable') {
+              calibrationDetail = 'ML service not running — start with: docker run -p 5000:5000 fip-ml';
+            } else if (latest.failure_reason && latest.failure_reason.includes('calibration_failed')) {
+              calibrationDetail = 'Calibration model not yet trained';
+            } else if (!latest.calibration_applied && latest.failure_reason === null) {
+              calibrationDetail = 'Calibration pending — model not yet trained (informational)';
+            } else {
+              calibrationDetail = latest.failure_reason || 'Calibration skipped';
+            }
           }
         }
 

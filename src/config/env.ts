@@ -29,6 +29,9 @@ export interface EnvConfig {
   // Cloud Run
   readonly PORT: number;
   readonly NODE_ENV: 'development' | 'production' | 'test';
+
+  // ML Service
+  readonly ML_SERVICE_URL: string;
 }
 
 const REQUIRED_IN_PRODUCTION: readonly string[] = [
@@ -106,6 +109,7 @@ function loadEnvConfig(): EnvConfig {
     RAPIDAPI_PROXY_SECRET: process.env['RAPIDAPI_PROXY_SECRET'] ?? '',
     PORT: getPort(),
     NODE_ENV: nodeEnv,
+    ML_SERVICE_URL: process.env['ML_SERVICE_URL'] ?? 'http://localhost:5000',
   });
 }
 

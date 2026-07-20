@@ -548,7 +548,7 @@ function createStageHandlers(supabase: SupabaseClient, calibrationParams: Calibr
       // ─── Tier 4.3: Ensemble with ML Service (non-blocking) ────────────────
       // Call the ML service for XGBoost probabilities and blend with similarity-based.
       // If ML service is unavailable, use similarity-only (graceful degradation).
-      const mlServiceUrl = process.env['ML_SERVICE_URL'];
+      const mlServiceUrl = env.ML_SERVICE_URL;
 
       // Learning pipeline tracking state
       let rawProbsForCalibration: { up: number; down: number; flat: number } | null = null;
@@ -772,7 +772,7 @@ function createStageHandlers(supabase: SupabaseClient, calibrationParams: Calibr
                 vol_expansion_ratio: eventContext.vol_expansion_ratio,
               }
             : null,
-          failure_reason: mlServiceUrl ? 'ml_service_unavailable' : null,
+          failure_reason: mlServiceUrl ? 'ml_service_unavailable' : 'ml_service_url_not_configured',
         };
       } catch { /* diagnostics must never affect pipeline */ }
 
