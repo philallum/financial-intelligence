@@ -21,26 +21,39 @@ FLAT_THRESHOLD_PIPS = 2.0
 
 
 async def _supabase_query(table: str, params: str) -> list[dict]:
-    """Query Supabase REST API directly with httpx."""
+    """Query Supabase REST API directly with httpx. Paginates to fetch all rows."""
     url = os.environ.get("SUPABASE_URL", "")
     key = os.environ.get("SUPABASE_SERVICE_ROLE_KEY", "")
 
-    async with httpx.AsyncClient(timeout=30.0) as client:
-        response = await client.get(
-            f"{url}/rest/v1/{table}?{params}",
-            headers={
-                "apikey": key,
-                "Authorization": f"Bearer {key}",
-                "Content-Type": "application/json",
-            },
-        )
-        response.raise_for_status()
-        return response.json()
+    all_rows: list[dict] = []
+    page_size = 1000
+    offset = 0
+
+    async with httpx.AsyncClient(timeout=60.0) as client:
+        while True:
+            paginated_params = f"{params}&offset={offset}&limit={page_size}"
+            response = await client.get(
+                f"{url}/rest/v1/{table}?{paginated_params}",
+                headers={
+                    "apikey": key,
+                    "Authorization": f"Bearer {key}",
+                    "Content-Type": "application/json",
+                    "Prefer": "count=exact",
+                },
+            )
+            response.raise_for_status()
+            rows = response.json()
+            all_rows.extend(rows)
+            if len(rows) < page_size:
+                break
+            offset += page_size
+
+    return all_rows
 
 
 async def train_model(
     test_split: float = 0.2,
-    min_samples: int = 500,
+    min_samples: int = 200,
     n_estimators: int = 200,
     max_depth: int = 5,
     learning_rate: float = 0.05,

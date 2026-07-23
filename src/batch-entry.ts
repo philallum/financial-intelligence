@@ -155,10 +155,45 @@ function createStageHandlers(supabase: SupabaseClient, calibrationParams: Calibr
         };
       } catch { /* diagnostics must never affect pipeline */ }
 
-      return generateFingerprint({
+      const fingerprint = generateFingerprint({
         ...input,
         ...(marketContext && { market_context: marketContext }),
       });
+
+      // Persist fingerprint to market_fingerprints (enables outcome computation on next run)
+      try {
+        const { error: fpPersistError } = await supabase.from('market_fingerprints').upsert(
+          {
+            fingerprint_id: fingerprint.fingerprint_id,
+            asset: fingerprint.asset,
+            timeframe: fingerprint.timeframe,
+            timestamp_utc: fingerprint.timestamp_utc,
+            market_state_version: fingerprint.market_state_version,
+            ohlc: fingerprint.ohlc,
+            return_profile: fingerprint.return_profile,
+            regime: fingerprint.regime,
+            market_structure_vector: JSON.stringify(fingerprint.state_layers.market_structure),
+            volatility_vector: JSON.stringify(fingerprint.state_layers.volatility_profile),
+            liquidity_vector: JSON.stringify(fingerprint.state_layers.liquidity_field),
+            macro_vector: JSON.stringify(fingerprint.state_layers.macro_context),
+            sentiment_vector: JSON.stringify(fingerprint.state_layers.sentiment_pressure),
+            extended_state: fingerprint.extended_state ?? {},
+            quantile_table_version: fingerprint.normalisation.quantile_table_version,
+            scaling_method: fingerprint.normalisation.scaling_method,
+            session: fingerprint.regime.session,
+            batch_id: crypto.randomUUID(),
+          },
+          { onConflict: 'asset,timeframe,timestamp_utc' },
+        );
+        if (fpPersistError) {
+          console.warn(`[BatchEntry] Fingerprint persistence warning: ${fpPersistError.message}`);
+        }
+      } catch (err) {
+        // Non-blocking — fingerprint persistence must never halt the pipeline
+        console.warn(`[BatchEntry] Fingerprint persistence failed (non-blocking): ${err instanceof Error ? err.message : String(err)}`);
+      }
+
+      return fingerprint;
     },
     async topology(fingerprintId, asset) {
       // Fetch up to 120 most recent 4H candles for the asset, ordered chronologically (ASC)

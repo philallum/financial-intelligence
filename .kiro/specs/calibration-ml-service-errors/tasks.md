@@ -121,7 +121,7 @@ Fix the `ML_SERVICE_URL` configuration bug that causes the batch pipeline to ski
     - **EXPECTED OUTCOME**: Tests PASS (confirms no regressions: all existing EnvConfig fields unchanged, dashboard rendering for calibration_applied: true unchanged)
     - Confirm all tests still pass after fix (no regressions)
 
-- [ ] 4. Checkpoint - Ensure all tests pass
+- [x] 4. Checkpoint - Ensure all tests pass
   - Run full test suite to verify no regressions across the codebase
   - Verify exploration test (Property 1) passes after fix
   - Verify preservation tests (Property 2) pass after fix

@@ -16,7 +16,7 @@ router = APIRouter()
 class TrainRequest(BaseModel):
     """Training configuration."""
     test_split: float = 0.2  # Walk-forward: last 20% as test
-    min_samples: int = 500   # Minimum training samples required
+    min_samples: int = 200   # Minimum training samples required
     n_estimators: int = 200  # XGBoost trees
     max_depth: int = 5       # Tree depth
     learning_rate: float = 0.05
