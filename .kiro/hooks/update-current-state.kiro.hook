@@ -1,0 +1,13 @@
+{
+  "enabled": true,
+  "name": "Update CURRENT-STATE.md",
+  "description": "After any agent task completes, reviews what changed and appends a dated changelog entry to CURRENT-STATE.md if the changes affect the pipeline, infrastructure, APIs, calculations, dashboard, or configuration.",
+  "version": "1",
+  "when": {
+    "type": "agentStop"
+  },
+  "then": {
+    "type": "askAgent",
+    "prompt": "Review what you just did in this session. If any changes were made that affect the system's pipeline, infrastructure, scheduled jobs, APIs, ML service, prediction calculations, database schema, dashboard, configuration, or any other aspect documented in CURRENT-STATE.md:\n\n1. Update the \"Last updated\" date at the top of CURRENT-STATE.md\n2. Append a new entry to a \"## Change Log\" section at the bottom of CURRENT-STATE.md with format:\n\n### YYYY-MM-DD — Brief title\n- What changed (technical detail)\n- Why (the problem or improvement)\n- Impact on predictions/system behavior\n\n3. If any section of the document is now inaccurate due to the changes, update that section in-place to reflect the new state.\n\nIf the session only involved reading, analysis, or discussion with no code/config changes, do nothing."
+  }
+}

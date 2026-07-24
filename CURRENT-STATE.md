@@ -1,486 +1,549 @@
-# Financial Intelligence Platform — Current State
+# Financial Intelligence Platform — Technical State Report
 
-*Last updated: 2026-07-12*
+*Last updated: 2026-07-24*
 
-## What's Built
 
-A batch-driven FX forecasting and research platform that generates 4H probabilistic forecasts using historical similarity matching enriched with real-time sentiment and macroeconomic signals. The platform runs every 4 hours, produces directional probability forecasts (UP/DOWN/FLAT), serves them via a REST API with real-time tradeability evaluation (including news risk blocking), and maintains a permanent research archive of forecasts, evaluations, and similarity matches for longitudinal analysis.
 
-Asset configuration is centralised in the **Research Asset Registry** (`src/config/research-assets.ts`) — a single typed module that defines which assets are processed, which engines run, and which providers are used. Adding a new market (e.g., GBPUSD) is a configuration-only change.
+## Executive Summary
 
-## Architecture (Live)
+A batch-driven FX forecasting platform that produces 4H directional probability predictions (UP/DOWN/FLAT) for currency pairs using a two-model ensemble: historical similarity matching + XGBoost machine learning. The pipeline runs every 4 hours, serves predictions via a REST API with real-time tradeability scoring, and maintains a research archive for accuracy tracking.
+
+**Active Assets:** EURUSD, GBPUSD
+**Prediction Frequency:** Every 4 hours (6 times daily)
+**Ensemble:** 50% similarity-based + 50% XGBoost
+**Current ML Accuracy:** ~44% (3-class: UP/DOWN/FLAT)
+**Infrastructure:** Google Cloud Run (europe-west1), Supabase Postgres
+
+---
+
+## System Architecture
 
 ```
-Cloud Scheduler (6x daily)
+Cloud Scheduler (6x daily, every 4h)
         │
         ▼
-Cloud Run Job (batch) ──→ Supabase Postgres + pgvector
-        │                        ↑
-        ├─ Ingestion             │
-        ├─ Sentiment Engine ─────┤ (news_articles)
-        ├─ Macro Context Engine ─┤ (economic_events)
-        ├─ Fingerprint ──────────┤ (market_fingerprints)
-        ├─ Topology              │
-        ├─ Regime v2             │
-        ├─ Similarity ───────────┤ (research_similarity_archive)
-        ├─ Outcome               │
-        ├─ Forecast              │
-        ├─ Confidence v2         │
-        ├─ Cache Write ──────────┤ (cached_forecasts)
-        └─ Research Persist ─────┘ (research_forecasts)
+Cloud Run Job: BATCH PIPELINE ──────────────────────────────────────────┐
+  │                                                                      │
+  ├─ 1. Ingest 4H OHLC candle (Twelve Data → Massive → Yahoo)          │
+  ├─ 2. Sentiment (news_articles → 6-dim vector) ─────────┐             │
+  ├─ 3. Macro Context (economic_events → 8-dim vector) ───┤ parallel    │
+  ├─ 4. Fingerprint (62-dim state vector, SHA-256 ID) ────┘             │
+  ├─ 5. Topology (40-dim S/R structural levels)                         │
+  ├─ 6. Regime v2 (classify into 9 market regimes)                      │
+  ├─ 7. Similarity (top 50 historical matches, cosine)                  │
+  ├─ 8. Outcome (empirical return distribution from matches)            │
+  ├─ 9. Forecast + ML Ensemble (50/50 blend)                            │
+  ├─ 10. Calibration (isotonic regression, if model loaded)             │
+  ├─ 11. Confidence v2 (evidence-based scoring)                         │
+  ├─ 12. Cache Write → cached_forecasts table                           │
+  ├─ 13. Research Persist → research_forecasts archive                  │
+  └─ 14. Post: Outcome Backfill + Evaluation                           │
+                                                                         │
+Cloud Run Service: ML SERVICE (Python/FastAPI/XGBoost) ←─────── /predict │
+  ├─ POST /predict (30-feature XGBoost → UP/DOWN/FLAT probs)            │
+  ├─ POST /train (retrain from historical data)                         │
+  ├─ POST /calibrate (isotonic regression)                              │
+  └─ POST /calibrate/train (train calibration model)                    │
+                                                                         │
+Cloud Run Service: API ──────────────────────────────────────────────────┘
+  ├─ GET /v1/forecast/:asset (cached forecast + live tradeability)
+  ├─ GET /v1/similarity/:asset (similarity matches)
+  ├─ GET /v1/state/:asset (regime + session)
+  └─ GET /health
 
-Cloud Run Job (integrity, daily 01:00)
-        ├─ Gap detection + backfill
-        ├─ News ingestion (Finnhub + NewsAPI)
-        ├─ Calendar ingestion (Alpha Vantage)
-        └─ Report production
+Cloud Run Job: INTEGRITY (daily 01:00 UTC)
+  ├─ Gap detection + candle backfill
+  ├─ News ingestion (Finnhub + NewsAPI)
+  ├─ Economic calendar ingestion (Alpha Vantage)
+  └─ Derivation recomputation
 
-Cloud Run Service (API)
-        ├─ GET /v1/forecast/:asset → cached forecast + live tradeability + news risk
-        ├─ GET /v1/similarity/:asset → similarity matches
-        └─ GET /v1/state/:asset → regime + session state
+Cloud Scheduler: ML RETRAIN (weekly, Sunday 02:00 UTC)
+  └─ POST /train on ML service
 ```
 
-## Infrastructure
+---
 
-| Component | Service | Region | Status |
-|-----------|---------|--------|--------|
-| API | Cloud Run Service (`financial-intelligence-api`) | europe-west1 | ✓ Live |
-| Batch Pipeline | Cloud Run Job (`financial-intelligence-batch`) | europe-west1 | ✓ Live |
-| Integrity Job | Cloud Run Job (`fip-integrity`) | europe-west1 | ✓ Live |
-| Scheduler | Cloud Scheduler | europe-west1 | ✓ Enabled (batch 6x/day, integrity 1x/day) |
-| Database | Supabase Postgres + pgvector | eu-west-1 | ✓ Live |
-| Container Registry | Artifact Registry | europe-west1 | ✓ Active |
-| Secrets | Secret Manager | global | ✓ 8+ secrets stored |
-| AI Model | Vertex AI (Gemini 2.5 Flash) | us-central1 | ✓ Connected (not yet used in pipeline) |
-| CI/CD | Cloud Build | global | ✓ Automated test → build → push → deploy |
+## Scheduled Jobs (Production)
 
-### URLs
+| Job | Schedule (UTC) | Target | Purpose |
+|-----|---------------|--------|---------|
+| `financial-intelligence-batch-trigger` | `0 0,4,8,12,16,20 * * *` | Batch Cloud Run Job | Full prediction pipeline |
+| `fip-integrity-trigger` | `0 1 * * *` | Integrity Cloud Run Job | Data quality + ingestion |
+| `fip-ml-weekly-retrain` | `0 2 * * 0` (Sundays) | ML Service `/train` | Weekly XGBoost retraining |
 
-- **API**: https://financial-intelligence-api-517029156879.europe-west1.run.app
-- **Health**: https://financial-intelligence-api-517029156879.europe-west1.run.app/health
-- **GCP Project**: `financial-intelligence-501107`
-- **Supabase Project**: `vzfamclwlbxonabvhcve`
+---
 
-## API Endpoints
+## Prediction Calculation — Complete Formula Chain
 
-| Endpoint | Method | Auth | Description |
-|----------|--------|------|-------------|
-| `/health` | GET | No | Health check with DB connectivity |
-| `/v1/forecast/:asset` | GET | No (MVP) | Cached forecast + real-time tradeability + news risk evaluation |
-| `/v1/similarity/:asset` | GET | No (MVP) | Latest similarity matches with per-layer breakdown |
-| `/v1/state/:asset` | GET | No (MVP) | Current regime, session, and market state |
-| `/v1/openapi.json` | GET | No | OpenAPI spec (auto-generated from registry) |
-| `/docs` | GET | No | Swagger UI |
+This is the exact sequence of computations that produces a single forecast:
 
-### Sample Response: GET /v1/forecast/EURUSD
+### Step 1: Data Ingestion
+- Fetch latest 4H OHLC candle from Twelve Data (fallback: Massive API → Yahoo Finance)
+- Store to `raw_candles` table
+- 10-second timeout per provider
 
+### Step 2: Sentiment Vector (6 dimensions)
+- **Input:** News articles from `news_articles` table (24h window before candle boundary)
+- **Formula:** Weighted mean of `sentiment_hint` values with exponential time decay (half-life = 8h) × relevance_score
+- **Output dimensions:** aggregate_sentiment, bullish_pressure, bearish_pressure, article_volume, sentiment_dispersion, momentum
+- **Confidence blending:** If fewer than 3 articles, blend toward neutral (0.5)
+- **Current issue:** sentiment_hint is mostly 0 from providers — requires LLM-based scoring to be useful
+
+### Step 3: Macro Context Vector (8 dimensions)
+- **Input:** Economic events from `economic_events` table (72h lookback, 24h lookahead)
+- **Dimensions:** event_proximity_pressure, aggregate_surprise_factor, rate_differential, high_impact_count, medium_impact_count, event_density, upcoming_event_intensity, composite_macro_state
+- **Proximity formula:** `1 - (hours_to_event / 24)`, clamped [0,1]
+- **Surprise formula:** `(actual - estimate) / |estimate|`, impact-weighted, mapped [-1,1] → [0,1]
+- **Composite:** Weighted sum (proximity 0.25, surprise 0.20, rate_diff 0.15, high_count 0.15, upcoming 0.15, density 0.05, medium_count 0.05)
+
+### Step 4: Fingerprint Generation (62 dimensions)
+- **fingerprint_id:** `SHA-256(asset + ":" + timestamp_utc)` — deterministic
+- **Layer 1 - Market Structure (16d):** Body position, body size, upper/lower shadow ratios, direction, trend strength, impulse ratio, rejection ratio, close position, symmetry, sigmoid-mapped net return, normalised range, momentum proxy, additional derived features
+- **Layer 2 - Volatility Profile (12d):** ATR proxy (/100 pips), body-to-range efficiency, expansion (/50 pips), contraction indicator, speed proxy, vol regime score, and derived features
+- **Layer 3 - Liquidity Field (20d):** 20-bin spatial density field relative to current candle's price range — encodes support/resistance pressure distribution
+- **Layer 4 - Macro Context (8d):** Direct pass-through of Macro Context Engine output (or neutral 0.5 if unavailable)
+- **Layer 5 - Sentiment Pressure (6d):** Direct pass-through of Sentiment Engine output (or neutral 0.5 if unavailable)
+- **Regime classification:** volatility_regime (LOW/NORMAL/HIGH based on range_pips thresholds 30/70), trend_regime (BULLISH/BEARISH/RANGING based on |net_return|/range > 0.3), session (ASIA/LONDON/NY based on UTC hour)
+- **Persisted to:** `market_fingerprints` table (enables outcome computation on subsequent runs)
+
+### Step 5: Topology (40 dimensions, non-blocking)
+- **Input:** 30-120 most recent OHLC candles
+- **Process:** Swing detection → cluster at 5-pip tolerance → count interactions (touches, rejections, breakouts within 3-pip threshold) → rank by score (rejections×2 + touches - breakouts) → classify type (support/resistance/flip_zone) → normalise to 40-dim vector
+- **Output:** Up to 20 structural levels + 40-dim normalised vector
+- **Contribution:** Blended into similarity scoring at 10% weight
+
+### Step 6: Regime v2 Classification (non-blocking)
+- **9 regime types:** trend, ranging, expansion, contraction, macro_driven, breakout, reversal, accumulation, distribution
+- **Method:** Rule-based with explicit thresholds on fingerprint features
+- **Impact:** Determines which similarity weight matrix is used (which layers matter most for finding similar history)
+
+### Step 7: Similarity Matching
+- **Candidate pool:** 500 fingerprints from `market_fingerprints` (same asset, timeframe, excluding self)
+- **Scoring:** Per-layer cosine similarity → regime-weighted linear combination
+- **Weight matrices (frozen per regime):**
+  - LOW_RANGING: structure=0.40, liquidity=0.30, volatility=0.15, macro=0.10, sentiment=0.05
+  - HIGH_BULLISH/BEARISH: structure=0.25, volatility=0.25, liquidity=0.15, macro=0.20, sentiment=0.15
+  - NORMAL_*: structure=0.20, volatility=0.15, liquidity=0.15, macro=0.30, sentiment=0.20
+- **Bonuses:** Same session +5%, same volatility regime +3%
+- **Topology blending:** Final = (1 - 0.10) × base_score + 0.10 × topology_cosine
+- **Output:** Top 50 matches ranked by composite score
+
+### Step 8: Outcome Distribution
+- **Input:** Forward 4H returns (net_return_pips) from the 50 matched fingerprints' `market_outcomes` records
+- **Classification:** UP if return > +2 pips, DOWN if < -2 pips, FLAT if |return| ≤ 2 pips
+- **Direction probability:** count_in_direction / N (equal weight per match)
+- **Additional stats:** mean_return, median_return, std_dev, p10/p50/p90 risk range
+- **Critical parameter:** FLAT_THRESHOLD = 2 pips (hardcoded in constants.ts)
+
+### Step 9: ML Ensemble (XGBoost + Similarity Blend)
+- **Similarity forecast:** Direct pass-through of outcome distribution direction_probabilities
+- **XGBoost prediction:** POST to ML service `/predict` with 30-feature vector (compressed from fingerprint layers)
+- **Ensemble formula:** `final = 0.5 × similarity_probs + 0.5 × ml_probs`, normalised to sum=1.0
+- **Graceful degradation:** If ML service unavailable → similarity-only forecast (α=1.0)
+- **3-second timeout** on ML service calls
+
+### Step 10: Calibration (Isotonic Regression)
+- **Input:** Ensemble direction probabilities
+- **Process:** POST to ML service `/calibrate` with {up, down, flat}
+- **If calibration model loaded:** Applies per-class isotonic regression, renormalises to sum=1.0
+- **If no model:** Returns raw probabilities unchanged with `calibrated: false`
+- **Current status:** Calibration model NOT trained (insufficient evaluated forecasts — needs 50+)
+- **3-second timeout** on calibration calls
+
+### Step 11: Confidence v2 Scoring
+- **Formula:** `confidence_final = calibration_adjusted_base × regime_accuracy_modifier × sample_density_modifier`
+- **Base:** Lookup in bucket_success_rates by max probability concentration (10 buckets)
+- **Regime modifier:** Observed accuracy for this regime type
+- **Sample density:** Observed accuracy at this sample size from density curve
+- **Parameters:** Frozen in `engine_versions.config` table, minimum 30 evaluated forecasts per grouping before group-specific params used
+- **Fallback:** If insufficient data, uses global_fallback (base=0.5, regime=0.5, sample=0.5)
+
+### Step 12: Tradeability (Runtime, at API request time)
+- **Formula:** `score = S_static × D_dynamic` where S_static = confidence_final
+- **D_dynamic:** `spread_factor × session_factor × liquidity_factor × news_factor`
+- **Spread factors:** ≤2 pips → 1.0, ≤5 pips → 0.7, >5 pips → 0.3
+- **Session factors:** London=1.0, NY=0.8, Asia=0.5
+- **News factor:** 0.0 if high-impact event within 8h (blocks trading)
+- **Labels:** score > 0.75 → GO, ≥ 0.45 → CONDITIONAL, < 0.45 → NO_GO
+
+---
+
+## ML Service (Python/FastAPI/XGBoost)
+
+### Architecture
+- **Runtime:** Python 3.11, FastAPI, Uvicorn
+- **ML Framework:** XGBoost (multi:softprob, 3-class)
+- **Deployment:** Cloud Run (europe-west1), min 0 / max 1 instance, 512MB, port 5000
+- **Model storage:** In-memory + `/tmp` (ephemeral — lost on scale-to-zero)
+- **URL:** `https://fip-ml-517029156879.europe-west1.run.app`
+
+### Endpoints
+| Endpoint | Method | Purpose |
+|----------|--------|---------|
+| `/predict` | POST | Direction prediction from 30-feature vector |
+| `/train` | POST | Train XGBoost from historical data |
+| `/calibrate` | POST | Apply isotonic regression to probabilities |
+| `/calibrate/train` | POST | Train calibration model from evaluations |
+| `/drift-check` | POST | Weekly drift detection |
+| `/explain/compute` | POST | SHAP explainability (fire-and-forget) |
+| `/health` | GET | Health + model status |
+
+### XGBoost Training Details
+- **Data source:** `market_fingerprints` + `market_outcomes` tables (paginated fetch)
+- **Feature extraction:** 30 dimensions from fingerprint vectors (compressed L1/L2 + full L4/L5 + session/regime one-hot + extended features)
+- **Labels:** net_return_pips > 2 → UP(0), < -2 → DOWN(1), else FLAT(2)
+- **Split:** Walk-forward temporal (80% train / 20% test, chronological — no data leakage)
+- **Hyperparameters:** 200 trees, max_depth=5, learning_rate=0.05, subsample=0.8, colsample_bytree=0.8, min_child_weight=5, reg_alpha=0.1, reg_lambda=1.0
+- **Current performance:** 29,082 training samples, accuracy ~44%, F1 weighted ~41%
+- **Per-class accuracy:** UP ~49%, DOWN ~53%, FLAT ~0.3% (FLAT is severely under-predicted)
+- **Minimum samples:** 200 (reduced from default 500)
+
+### Known ML Issues
+1. **Ephemeral model storage** — model lost when Cloud Run scales to zero (weekly retrain compensates)
+2. **FLAT class nearly unlearnable** — XGBoost can't distinguish FLAT (±2 pips) from directional moves
+3. **No feature importance tracking** — SHAP endpoint exists but not systematically used
+4. **44% accuracy is slightly above random** for 3-class (33% baseline)
+
+---
+
+## API Service (Express/TypeScript)
+
+### Endpoints
+| Endpoint | Auth | Description |
+|----------|------|-------------|
+| `GET /v1/forecast/:asset` | Optional | Cached forecast + live tradeability + news risk |
+| `GET /v1/similarity/:asset` | Required | Latest 50 similarity matches with per-layer breakdown |
+| `GET /v1/state/:asset` | Required | Current regime, session, market state |
+| `GET /health` | None | Health check with DB connectivity |
+| `GET /docs` | None | Swagger UI |
+| `GET /v1/openapi.json` | None | OpenAPI spec |
+
+### Auth & Rate Limiting
+- **Dual auth:** RapidAPI proxy secret OR direct API key (Argon2id hash)
+- **Anonymous access:** Restricted response (no expected_move, no execution_metrics) + 60 req/min IP limit
+- **Plan limits:** FREE=100/day, STARTER=5K/month, PROFESSIONAL=25K/month, ENTERPRISE=custom
+- **RapidAPI:** Bypasses internal rate limiting (enforced at proxy layer)
+- **Middleware chain:** Security headers → Request ID → Size guard → CORS → Auth → Authorisation → Rate limiter → Response filter → Edge cache → Routes
+
+### Sample Response: GET /v1/forecast/EURUSD (authenticated)
 ```json
 {
   "asset": "EURUSD",
-  "direction_probabilities": { "up": 0.48, "down": 0.42, "flat": 0.10 },
-  "expected_move_pips": 3.34,
+  "direction_probabilities": { "up": 0.46, "down": 0.30, "flat": 0.24 },
+  "expected_move_pips": -2.15,
   "confidence_final": 0.5,
   "tradeability_score": 0,
   "tradeability_label": "NO_GO",
-  "forecast_valid_until": "2026-07-10T16:00:00+00:00",
-  "execution_metrics": {
-    "spread_penalty": "low",
-    "session_alignment": "suboptimal",
-    "news_buffer_status": "blocked"
-  }
+  "forecast_valid_until": "2026-07-22T08:00:00+00:00",
+  "execution_metrics": { "spread_penalty": "low", "session_alignment": "suboptimal", "news_buffer_status": "blocked" }
 }
 ```
 
-## Engines (12 total)
+---
 
-| Engine | Type | Purpose |
-|--------|------|---------|
-| **Sentiment Engine** | Pure, batch | 6-dim vector from news articles (exponential decay, confidence blending) |
-| **Macro Context Engine** | Pure, batch | 8-dim vector from economic events (proximity, surprise, rate differential) |
-| **News Risk Evaluator** | DB query, runtime | Boolean flag: high-impact event within 8h → NO_GO |
-| **Fingerprint Engine** | Pure, batch | 5-layer market state vector (L1-L5) + extended features |
-| **Similarity Engine** | Pure + DB, batch | Regime-weighted cosine similarity across 5 layers + topology blending |
-| **Outcome Engine** | Pure, batch | Empirical outcome distribution from matched fingerprint returns |
-| **Forecast Engine** | Pure, batch | Directional probability forecasting (UP/DOWN/FLAT) |
-| **Confidence Engine v2** | Pure, batch | Evidence-based confidence using calibration parameters |
-| **Tradeability Engine** | Pure, runtime | S_static × D_dynamic (spread × session × liquidity × news) |
-| **Topology Engine** | Pure, batch | 40-dim support/resistance vector from candle history |
-| **Regime Engine v2** | Pure, batch | 9 regime types with rule-based classification |
-| **Fingerprint Serialiser** | Pure | Deterministic fingerprint serialisation for storage |
+## Dashboard (Local HTML)
 
-## Batch Pipeline (14 stages)
+Single-page app at `dashboard/index.html` with two views:
 
-```
-ingestion → [sentiment + macro_context (parallel)] → fingerprint → topology → regime_v2 →
-similarity (+ archive) → outcome → forecast → confidence → cache_write → research_persist →
-[post: outcome_backfill → evaluation]
-```
+### Trader View
+- Current direction prediction (UP/DOWN/FLAT with percentages and colour coding)
+- Expected move in pips
+- Confidence score
+- Tradeability badge (GO / CONDITIONAL / NO_GO)
+- Price sparkline (last 24 candles)
+- Sentiment drivers from news
+- Upcoming economic events
+- Prediction history with accuracy tracking
 
-- Runs every 4 hours at: 00:02, 04:02, 08:02, 12:02, 16:02, 20:02 UTC
-- Pipeline duration: ~3.5 seconds
-- Timeout: 15 minutes (max)
-- Sentiment + macro engines run in parallel (no data dependency)
-- Evaluation stage runs post-pipeline (non-fatal)
-- Outcome backfill runs post-pipeline (non-fatal)
+### Developer View
+- Pipeline execution health (last batch status, duration)
+- Batch diagnostics per stage (ML latency, calibration status, similarity metrics)
+- Continuous Learning Pipeline card (calibration status, failure reasons)
+- Error log with structured details
+- Similarity match visualization
+
+### Dashboard Data Flow
+- Reads from: `cached_forecasts`, `batch_diagnostics`, `raw_candles`, `news_articles`, `economic_events` tables via Supabase JS client (anon key)
+- Also calls the public API for live tradeability scoring
+- Auto-refreshes every 60 seconds
+- Asset selector: EURUSD, GBPUSD
+
+---
+
+## Database State (Production, July 2026)
+
+| Table | Rows | Purpose | Key Columns |
+|-------|------|---------|-------------|
+| `raw_candles` | ~10,550 | Historical + live 4H OHLC | asset, timeframe, timestamp_utc, open, high, low, close |
+| `market_fingerprints` | ~36,358 | 5-layer state vectors | fingerprint_id (PK), asset, timestamp_utc, regime (JSONB), vectors (text/JSON), extended_state |
+| `market_outcomes` | ~36,357 | Forward 4H returns per fingerprint | fingerprint_id (FK), net_return_pips, max_favourable/adverse_excursion |
+| `fingerprint_topology` | ~36,354 | S/R topology vectors | fingerprint_id, topology_vector (pgvector), levels (JSON) |
+| `research_forecasts` | 153 | Immutable forecast archive | direction_probabilities, confidence, engine_versions, regime, forecast_expiry |
+| `research_evaluations` | 145 | Forecast accuracy evaluations | direction_accuracy, brier_score, calibration_bucket, status |
+| `research_similarity_archive` | ~7,500 | Per-batch similarity matches | fingerprint_id, match records with per-layer breakdown |
+| `batch_diagnostics` | 2 | Per-asset pipeline diagnostics | asset (PK), diagnostics (JSONB) |
+| `batch_runs` | ~900+ | Pipeline execution records | batch_id, status, duration, engine_versions |
+| `cached_forecasts` | 2 | Active serving layer (1 per asset) | asset, payload, valid_until |
+| `news_articles` | ~50+ | News from Finnhub + NewsAPI | headline, sentiment_hint, relevance_score, asset_id |
+| `economic_events` | ~13+ | Economic calendar | name, impact, currency, event_date, actual, estimate |
+| `engine_versions` | 12 | Active engine configs | engine_name, engine_version, config (JSONB), is_active |
+| `execution_traces` | ~11+ | Structured per-engine traces | engine_name, batch_id, duration_ms, status |
+| `api_keys` | 4 | Auth + usage | key_hash, subscription_plan, daily/monthly_usage |
+| `customers` | ~4 | Customer records | id, tier |
+
+### Data Coverage
+- **Assets:** EURUSD (historical data 2010–2026), GBPUSD (historical data 2010–2026)
+- **Timeframe:** 4H only
+- **Fingerprint corpus:** ~36,354 (full coverage from 2010)
+- **Outcomes:** ~36,353 (nearly complete — gap from July 15–21 being filled)
+- **Evaluations:** 145 records, all `status: 'outcome_unavailable'` (no forecasts have been evaluated yet)
+
+---
 
 ## Data Providers
 
-| Provider | Purpose | Tier | Status |
-|----------|---------|------|--------|
-| Twelve Data | 4H OHLC (primary) | Free | ✓ Connected |
-| Massive API | OHLC fallback | Paid | ✓ Connected |
-| Yahoo Finance | OHLC emergency | Free | ✓ Connected |
-| Alpha Vantage | US10Y yield + economic calendar | Free | ✓ Connected |
-| Finnhub | Market news (forex) | Free | ✓ Connected |
-| NewsAPI | Financial news (general) | Free | ✓ Connected |
+| Provider | Purpose | Tier | Rate Limit | Status |
+|----------|---------|------|-----------|--------|
+| Twelve Data | 4H OHLC (primary) | Free | 800/day, 8/min | ✓ Connected |
+| Massive API | OHLC (fallback) | Paid | Unlimited | ✓ Connected |
+| Yahoo Finance | OHLC (emergency) | Free | N/A | ✓ Connected |
+| Alpha Vantage | US10Y, DXY, VIX, SPX + calendar | Free | 25/day | ✓ Connected (DXY/VIX/SPX returning 404) |
+| Finnhub | Market news (forex) | Free | 60/min | ✓ Connected |
+| NewsAPI | Financial news | Free | 100/day | ✓ Connected |
 
-## Database State
+---
 
-| Table | Rows | Purpose |
-|-------|------|---------|
-| `raw_candles` | ~10,504 | Historical + live 4H OHLC data |
-| `market_fingerprints` | ~10,502 | Deterministic 5-layer market state vectors |
-| `market_outcomes` | ~10,501 | Forward 4H returns per fingerprint |
-| `news_articles` | 41+ | Ingested news from Finnhub + NewsAPI |
-| `economic_events` | 13+ | Economic calendar from Alpha Vantage |
-| `engine_versions` | 12 | Active engine version configs + calibration params |
-| `api_keys` | 4 | API keys (internal, retail, developer, research) |
-| `cached_forecasts` | 1 | Current active forecast (serving layer) |
-| `research_forecasts` | 1+ | Immutable forecast research archive |
-| `research_evaluations` | 0 | Forecast accuracy evaluations |
-| `research_similarity_archive` | 50+ | Similarity matches with per-layer breakdown |
-| `fingerprint_topology` | 10,500+ | S/R topology vectors per fingerprint |
-| `execution_traces` | 11+ | Structured traces from all pipeline stages |
+## Infrastructure
 
-### Data Coverage
+| Component | Service | Region | Config |
+|-----------|---------|--------|--------|
+| API | Cloud Run Service `financial-intelligence-api` | europe-west1 | max 2 instances, scale to zero |
+| Batch | Cloud Run Job `financial-intelligence-batch` | europe-west1 | 1Gi memory, 1 CPU, 900s timeout |
+| Integrity | Cloud Run Job `fip-integrity` | europe-west1 | 512Mi, 1 CPU, 1800s timeout |
+| ML Service | Cloud Run Service `fip-ml` | europe-west1 | 512Mi, 1 CPU, min 0 / max 1, port 5000 |
+| Database | Supabase Postgres + pgvector | eu-west-1 | Free tier |
+| Registry | Artifact Registry `financial-intelligence` | europe-west1 | 4 images (batch, api, integrity, ml) |
+| Secrets | Secret Manager | global | 8+ secrets |
+| CI/CD | Cloud Build | global | cloudbuild.yaml (test → build → push → deploy) |
 
-- **Asset**: EUR/USD only (GBPUSD registry entry ready, needs historical data)
-- **Timeframe**: 4H only
-- **History**: Jan 2020 – Jul 2026 (6.5 years, ~10,500 candles)
-- **Fingerprint corpus**: 10,502 (full coverage)
-- **News articles**: 41 (daily ingestion active)
-- **Economic events**: 13 (covering 7-day forward window)
+### URLs
+- **API:** https://financial-intelligence-api-517029156879.europe-west1.run.app
+- **ML Service:** https://fip-ml-517029156879.europe-west1.run.app
+- **GCP Project:** `financial-intelligence-501107` (project number: 517029156879)
+- **Supabase:** `vzfamclwlbxonabvhcve`
 
-## Daily Data Integrity Job
+### Estimated Monthly Cost
+| Component | Cost |
+|-----------|------|
+| Cloud Run (API + Batch + Integrity + ML) | ~£5-10 |
+| Supabase (Free tier) | £0 |
+| Data providers (all free tier except Massive) | ~£0-5 |
+| Cloud Build + Scheduler + Secrets | ~£2 |
+| **Total** | **~£7-17/month** |
 
-Runs daily at 01:00 UTC via Cloud Scheduler → Cloud Run Job:
+---
 
-1. **Gap Detection** — Identifies missing candles across all assets/timeframes
-2. **Candle Backfill** — Fetches missing data from providers (3-provider fallback)
-3. **News Ingestion** — Collects articles from Finnhub + NewsAPI, assigns asset relevance
-4. **Calendar Ingestion** — Fetches economic events from Alpha Vantage, classifies impact
-5. **Derivation Recomputation** — Recomputes fingerprints for newly filled candles
-6. **Report Production** — Stores run report with status classification
+## Research & Evaluation System
 
-Fail-forward semantics: each stage runs independently, errors are accumulated.
+### Forecast Lifecycle
+1. **Archive:** Every batch persists to `research_forecasts` with full metadata (engine_versions, regime, sample_size)
+2. **Maturation:** Forecast expires after 4h (forecast_expiry = candle_boundary + 4h)
+3. **Outcome computation:** Next batch run computes forward return for the previous candle's fingerprint → stores to `market_outcomes`
+4. **Evaluation:** Post-pipeline stage queries matured forecasts, matches against outcomes, computes accuracy metrics
+5. **Calibration update:** Once 50+ evaluations accumulated, calibration model trainable
 
-## Research Namespace
+### Evaluation Metrics (per forecast)
+- **direction_accuracy:** 1 if predicted direction matches realised, 0 otherwise
+- **brier_score:** Mean squared error between predicted probability vector and one-hot actual
+- **calibration_bucket:** floor(confidence × 10) / 10 (e.g., "0.5-0.6")
+- **expected_move_error:** predicted_pips - actual_pips
+- **forecast_success:** direction correct AND within expected error tolerance
+- **tradeability_success:** forecast_success AND tradeability was GO
 
-| Phase | Component | Status |
-|-------|-----------|--------|
-| 1 | Forecast Archive (immutable persistence) | ✓ Live |
-| 2 | Evaluation Engine (accuracy + calibration) | ✓ Live |
-| 3 | Similarity Archive (per-layer breakdown) | ✓ Live |
-| 4 | Confidence Engine v2 (evidence-based) | ✓ Live |
-| 5 | Execution Traces + Experimentation Engine | ✓ Live |
+### Current Evaluation Status
+- 153 research forecasts archived
+- 145 evaluation records — ALL with status `outcome_unavailable`
+- Root cause: forecast fingerprint_ids didn't exist in `market_fingerprints` until July 22 fix
+- Now self-correcting: fingerprints persist during batch → outcomes computed next run → evaluations run post-pipeline
+- Estimated time to first evaluations: ~8 hours (2 batch cycles)
+- Estimated time to calibration training viable (50 evaluations): ~5-7 days
 
-## Test Suite
+---
 
-- **128+ test files** — all passing
-- **1400+ tests** total (unit, property-based, integration)
-- 35+ property-based test files (fast-check) for mathematical invariants
-- 5 integration test files (pipeline, API, boundary, research persist, archive)
-- 8 registry property-based tests (schema invariants, uniqueness, filter/sort)
-- TypeScript strict mode, zero compile errors
-- CI: tests run automatically in Cloud Build before deploy
+## Known Issues & Limitations
 
-## What's Working
+### Critical (Affecting Predictions)
+1. **FLAT class unlearnable by XGBoost** — 0.3% per-class accuracy for FLAT. The 2-pip threshold creates a tiny class that XGBoost can't distinguish. Consider: removing FLAT class (binary UP/DOWN), volatility-normalising the threshold, or increasing threshold.
+2. **ML model ephemeral** — stored in /tmp on Cloud Run, lost on scale-to-zero. Weekly retrain compensates but predictions degrade between cold starts. Consider: persistent storage (GCS) or pre-warming.
+3. **Calibration not yet active** — isotonic regression model can't train until 50+ evaluations complete. Pipeline self-corrects but takes ~1 week.
+4. **44% accuracy is marginal** — only 11% above random (33% for 3-class). Binary UP/DOWN would have higher baseline accuracy.
+5. **Intermarket data unavailable** — DXY, VIX, SPX all returning HTTP 404 from Alpha Vantage. L4 macro fingerprint layer falls back to neutral.
 
-1. ✓ Full 14-stage batch pipeline end-to-end (3.5s per asset)
-2. ✓ **Sentiment Engine** — real news → 6-dim vector for L5 fingerprint layer
-3. ✓ **Macro Context Engine** — real economic events → 8-dim vector for L4 fingerprint layer
-4. ✓ **News Risk Evaluator** — blocks tradeability when high-impact event within 8h
-5. ✓ API serving cached forecasts with real-time tradeability + news risk
-6. ✓ Historical similarity matching (500 candidates, 5-layer cosine + topology blending)
-7. ✓ Directional probability forecasts (UP/DOWN/FLAT)
-8. ✓ Confidence Engine v2 (evidence-based, calibration-aware)
-9. ✓ Cloud Scheduler triggering batch 6x/day + integrity 1x/day
-10. ✓ Daily data integrity (gap fill, news ingest, calendar ingest)
-11. ✓ Research forecast archival (immutable)
-12. ✓ Automated forecast evaluation (matured forecasts scored against outcomes)
-13. ✓ Similarity match archival with engine version snapshots
-14. ✓ Support/Resistance Topology Engine (40-dim structural levels)
-15. ✓ Extended market features (rolling trend, ATR percentile, vol regime, session stats)
-16. ✓ Regime Engine v2 (9 regime types with explanations)
-17. ✓ Research Asset Registry (centralised, typed, validation at startup)
-18. ✓ CI/CD via Cloud Build (automated test → build → push → deploy)
-19. ✓ OpenAPI spec auto-generation from registry at build time
-20. ✓ Topology similarity weight = 0.10 (actively contributing to scoring)
+### Moderate (Operational)
+6. **Evaluation pipeline gap** — fingerprints weren't persisted July 15-21, blocking outcome computation. Fixed July 22 — now self-healing.
+7. **Sentiment mostly neutral** — provider sentiment_hint values are predominantly 0. Without LLM-based scoring, L5 sentiment layer adds no signal.
+8. **Confidence always 0.5** — with insufficient evaluation data, confidence engine uses global fallback (0.5). All forecasts have identical confidence.
+9. **Tradeability always NO_GO** — confidence of 0.5 × dynamic factors never reaches 0.75 threshold. Also, news risk evaluator flags events even when none are relevant.
 
-## Pipeline Computation Reference
+### Low Priority
+10. **Single timeframe (4H)** — no multi-timeframe confirmation
+11. **No adaptive thresholds** — all engine parameters hardcoded, no automated tuning
+12. **Test suite flaky** — 1 intermittent property-based test failure (integrity-orchestrator)
+13. **API auth partially wired** — API keys exist but anonymous access allowed on all endpoints
 
-This section documents how each pipeline stage computes its output values, what those values mean, and where the tuneable parameters live. The goal is to provide a foundation for systematic evaluation of whether each computation is contributing positively to prediction accuracy — and where adjustments might improve results over time.
+---
 
-### Computation Flow (Value Chain)
+## Complexity Analysis — Where Simplification May Help
+
+### Potentially Over-Engineered
+
+| Component | Complexity | Signal Value | Simplification Option |
+|-----------|-----------|-------------|----------------------|
+| **5-layer fingerprint (62d)** | High — 16+12+20+8+6 dimensions computed per candle | Unclear — L3 (liquidity, 20d) is computed from single candle, L4/L5 often neutral | Consider: drop L3 (liquidity from 1 candle is questionable), reduce L1/L2 compression |
+| **9 regime types** | Medium — 9 rule sets with many thresholds | Low — mostly classifies as NORMAL_RANGING. Only 3-4 regimes appear frequently | Consider: collapse to 4 regimes (trend, range, expansion, event-driven) |
+| **Topology Engine (40d)** | High — swing detection + clustering + scoring from 120 candles | Low — only 10% weight in similarity, unclear impact on accuracy | Consider: remove entirely or increase weight if validated |
+| **Confidence Engine v2** | Medium — 3-factor multiplication with frozen calibration params | Zero currently — always returns 0.5 (no evaluation data) | Consider: simple confidence = max(direction_probability) until calibration data exists |
+| **Tradeability Engine** | Medium — 5 factors multiplied | Always NO_GO — live data feeds not connected | Consider: disable until live spread/session data wired |
+| **Research Archive (5 tables)** | Medium — full audit trail | Future value — enables calibration and accuracy tracking | Keep but don't invest until evaluations flowing |
+| **3-class prediction (UP/DOWN/FLAT)** | Fundamental design choice | FLAT class adds complexity with near-zero ML accuracy | Consider: binary UP/DOWN (reduces from 3-class to 2-class, improves accuracy) |
+
+### Well-Engineered (Keep As-Is)
+
+| Component | Why It Works |
+|-----------|-------------|
+| **Similarity matching (top 50)** | Core prediction mechanism. Cosine similarity across state vectors is sound. |
+| **Outcome distribution from matches** | Simple, interpretable — "what happened historically when the market looked like this" |
+| **XGBoost ensemble blend (50/50)** | Adds orthogonal signal to similarity. Ensemble generally outperforms individual models. |
+| **Batch pipeline architecture** | Clean sequential stages, fail-forward for non-critical stages, diagnostics collection |
+| **Research Asset Registry** | Single source of truth for asset config — adding assets is config-only |
+| **Walk-forward ML training** | Correct temporal split prevents data leakage |
+
+### Simplest Viable Prediction System
+
+If starting from scratch with the same data, the minimal system producing equivalent results would be:
 
 ```
-OHLC candle
-    │
-    ├─→ Fingerprint Engine → 5-layer state vector (62 dimensions total)
-    │       ├─ L1: Market Structure (16d) — price geometry
-    │       ├─ L2: Volatility Profile (12d) — movement intensity
-    │       ├─ L3: Liquidity Field (20d) — spatial density
-    │       ├─ L4: Macro Context (8d) — from Macro Engine
-    │       └─ L5: Sentiment Pressure (6d) — from Sentiment Engine
-    │
-    ├─→ Sentiment Engine → 6-dim vector (L5 layer input)
-    ├─→ Macro Context Engine → 8-dim vector (L4 layer input)
-    ├─→ Topology Engine → 40-dim S/R vector + 20 structural levels
-    ├─→ Regime Engine v2 → regime classification (9 types)
-    │
-    ▼
-Similarity Engine → top 50 historical matches (weighted cosine)
-    │
-    ▼
-Outcome Engine → empirical return distribution from matches
-    │
-    ▼
-Forecast Engine → direction probabilities (UP/DOWN/FLAT) + expected move
-    │
-    ▼
-Confidence Engine v2 → calibration-adjusted confidence score [0, 1]
-    │
-    ▼
-Tradeability Engine (runtime) → GO / CONDITIONAL / NO_GO
+OHLC → 16d fingerprint (L1 only) → cosine similarity → top 50 → outcome distribution → UP/DOWN binary
 ```
 
-### Stage-by-Stage Computation Details
+This eliminates: L2-L5 layers, topology, regime engine, ML service, calibration, confidence engine, tradeability engine. It would produce ~40-50% binary accuracy from similarity alone, which may equal or exceed the current 44% three-class accuracy.
 
-#### 1. Sentiment Engine
+---
 
-| Aspect | Detail |
-|--------|--------|
-| **Input** | News articles (headline, sentiment_hint [-1,1], relevance_score, published_at) |
-| **Output** | 6-dim vector [0,1]: aggregate_sentiment, bullish_pressure, bearish_pressure, article_volume, sentiment_dispersion, momentum |
-| **Core Formula** | Weighted mean of sentiment_hint with exponential time decay (half-life = 8h) × relevance_score, mapped from [-1,1] to [0,1] |
-| **Tuneable Parameters** | Decay half-life (8h), bullish/bearish threshold (±0.2), volume cap (50 articles), confidence blend threshold (3 articles) |
-| **What "good" looks like** | Dispersion separates from 0.5 during trending markets; momentum captures directional shift before price moves |
-| **Known weakness** | sentiment_hint is mostly 0 from providers — real discrimination depends on LLM-based scoring |
+## Parameter Reference (Tuneable Values)
 
-#### 2. Macro Context Engine
+| Parameter | Location | Current Value | Impact |
+|-----------|----------|---------------|--------|
+| FLAT_THRESHOLD | `src/config/constants.ts` | 2 pips | Determines UP/DOWN/FLAT boundary. Higher = more FLAT |
+| TOPOLOGY_SIMILARITY_WEIGHT | `src/config/constants.ts` | 0.10 | How much topology contributes to similarity scoring |
+| MAX_SIMILARITY_MATCHES | `src/config/constants.ts` | 50 | Number of historical matches used for outcome distribution |
+| BATCH_TIMEOUT_MS | `src/config/constants.ts` | 900,000 (15 min) | Max pipeline duration |
+| Regime weight matrices | `src/engines/similarity-engine.ts` | See Step 7 above | Which layers matter per regime type |
+| Session/regime bonuses | `src/batch-entry.ts` (similarity handler) | +5% session, +3% vol regime | Boost for same-context matches |
+| ML ensemble alpha | `src/batch-entry.ts` | 0.5 (50/50 blend) | Balance between similarity and XGBoost |
+| XGBoost hyperparams | `ml_service/app/routers/train.py` | 200 trees, depth 5, lr 0.05 | Model complexity |
+| Sentiment decay half-life | `src/engines/sentiment-engine.ts` | 8 hours | How quickly old news loses influence |
+| Macro proximity window | `src/engines/macro-context-engine.ts` | 24 hours | How far ahead events create pressure |
+| Confidence calibration | `engine_versions.config` DB table | All 0.5 (fallback) | Calibrated scoring once data accumulates |
+| Tradeability thresholds | `src/engines/tradeability-engine.ts` | GO>0.75, COND≥0.45 | Trading signal boundaries |
+| News risk lookahead | `src/engines/news-risk-evaluator.ts` | 8 hours | How far ahead events block trading |
+| Volatility regime thresholds | `src/engines/fingerprint-engine.ts` | LOW<30 pips, HIGH>70 pips | Regime classification boundaries |
+| Trend ratio threshold | `src/engines/fingerprint-engine.ts` | 0.3 | |net_return|/range for trending classification |
+| Min training samples | `ml_service/app/services/trainer.py` | 200 | Minimum data for XGBoost training |
 
-| Aspect | Detail |
-|--------|--------|
-| **Input** | Economic calendar events (name, impact, currency, event_date, actual, estimate, previous) |
-| **Output** | 8-dim vector [0,1]: event_proximity, surprise_factor, rate_differential, high_impact_count, medium_impact_count, event_density, upcoming_intensity, composite_macro_state |
-| **Core Formula** | Proximity = 1 - (hours_to_event / 24); Surprise = (actual - estimate) / |estimate|, impact-weighted; Composite = weighted sum of 7 dimensions (weights: proximity 0.25, surprise 0.20, rate_diff 0.15, high_count 0.15, upcoming 0.15, density 0.05, medium_count 0.05) |
-| **Tuneable Parameters** | Proximity decay window (24h), composite weights, event count normalisers (/5 for high, /10 for medium, /20 for density) |
-| **What "good" looks like** | Elevated composite before NFP, FOMC; proximity pressure spikes correlate with increased volatility |
-| **Known weakness** | Only 13 events in DB; surprise_factor requires actual values that arrive post-event |
-
-#### 3. Fingerprint Engine (5 Layers)
-
-| Layer | Dimensions | Key Computations | Meaning |
-|-------|-----------|-----------------|---------|
-| L1: Market Structure | 16 | Body position, body size, shadows, direction, trend strength, impulse ratio, rejection ratio, close position, symmetry, net return (sigmoid-mapped), range norm, momentum proxy | "What shape is this candle and what does it imply about directional commitment?" |
-| L2: Volatility Profile | 12 | ATR proxy (/100 pips), body-to-range efficiency, expansion (/50 pips), contraction, speed proxy, vol regime score | "How much energy is in this move and is volatility expanding or contracting?" |
-| L3: Liquidity Field | 20 | 20-bin spatial density field relative to current candle range — encodes S/R pressure distribution | "Where is the structural pressure around current price?" |
-| L4: Macro Context | 8 | Direct pass-through of Macro Context Engine vector | "What's the macro environment around this candle?" |
-| L5: Sentiment Pressure | 6 | Direct pass-through of Sentiment Engine vector | "What's the news-driven pressure around this candle?" |
-
-**Tuneable Parameters**: PIP_DIVISOR (0.0001), volatility thresholds (30/70 pips for LOW/HIGH), trend ratio threshold (0.3), reference pips for normalisation (50, 100).
-
-#### 4. Topology Engine
-
-| Aspect | Detail |
-|--------|--------|
-| **Input** | 30–120 most recent OHLC candles |
-| **Output** | Up to 20 structural levels (support/resistance/flip_zone) + 40-dim normalised vector |
-| **Core Formula** | Swing detection → cluster at 5-pip tolerance → count interactions (touches, rejections, breakouts within 3-pip threshold) → rank by score = rejections×2 + touches - breakouts → classify type → strength = rejections/touches → importance = strength × (1/distance), normalised |
-| **Tuneable Parameters** | Cluster tolerance (5 pips), interaction threshold (3 pips), max levels (20), scoring weights (rejection×2, touch×1, breakout×-1) |
-| **What "good" looks like** | High-strength levels near current price predict bounces; breakout levels predict continuation |
-| **Contribution to score** | Topology vector blended into similarity at weight 0.10 |
-
-#### 5. Regime Engine v2
-
-| Aspect | Detail |
-|--------|--------|
-| **Input** | Fingerprint state_layers (L1, L2) + extended features (rolling_trend, atr_percentile, vol_regime_score, macro_state, sentiment_summary) |
-| **Output** | Primary regime + up to 2 secondary regimes with relevance scores |
-| **Core Formula** | 9 rule sets with explicit thresholds evaluated independently; additive scoring per regime; highest score wins. Tie-break: alphabetical |
-| **Key Thresholds** | Trend: strength>0.55, impulse>0.5; Ranging: strength<0.35, expansion<0.4; Expansion: indicator>0.65, ATR>0.6; Breakout: impulse>0.6, speed>0.6, expansion>0.55 |
-| **What "good" looks like** | Regime classification should correlate with different outcome distributions — trending markets should produce more directional outcomes |
-| **Impact** | Regime determines the similarity weight matrix (which layers matter most for finding similar history) |
-
-#### 6. Similarity Engine
-
-| Aspect | Detail |
-|--------|--------|
-| **Input** | Query fingerprint + pre-filtered candidate corpus (same asset, timeframe, regime) |
-| **Output** | Top 50 matches with per-layer similarity breakdown and composite score [0,1] |
-| **Core Formula** | Per-layer similarity (cosine for L1-L3, L2/euclidean→sigmoid for L4-L5) → regime-weighted linear combination → optional topology blending (10%) → ranked by composite |
-| **Tuneable Parameters** | Regime weight matrices (frozen per regime type, e.g., LOW_RANGING: structure=0.40, liquidity=0.30, volatility=0.15, macro=0.10, sentiment=0.05), topology weight (0.10), candidate pool size (500), top-N (50) |
-| **What "good" looks like** | Higher mean similarity → tighter outcome distribution → higher confidence; matches from same regime → better prediction |
-| **Key insight for tuning** | The weight matrices determine which historical conditions we consider "similar" — if predictions are poor in a given regime, the weights for that regime may need adjustment |
-
-#### 7. Outcome Engine
-
-| Aspect | Detail |
-|--------|--------|
-| **Input** | Forward 4H returns (in pips) from the 50 matched fingerprints |
-| **Output** | Direction probabilities, mean/median return, std_dev, risk range (p10/p50/p90) |
-| **Core Formula** | FLAT: |R| ≤ 2 pips; UP: R > +2; DOWN: R < -2. Equal weight per match (1/N). Direction probability = count_in_direction / N |
-| **Tuneable Parameters** | FLAT_THRESHOLD (2 pips — this is critical), equal weighting (could be changed to similarity-weighted) |
-| **What "good" looks like** | Concentrated distributions (low std_dev) with clear directional majority → higher accuracy predictions |
-| **Key insight for tuning** | The FLAT threshold significantly affects prediction distribution. A higher threshold = more FLAT predictions; lower = more directional. Should this be volatility-normalised? |
-
-#### 8. Forecast Engine
-
-| Aspect | Detail |
-|--------|--------|
-| **Input** | OutcomeDistribution from Outcome Engine |
-| **Output** | Directional probabilities (UP, DOWN, FLAT) summing to 1.00; expected_move_pips |
-| **Core Formula** | Direct pass-through of outcome direction_probability normalised to 2dp. Residual from rounding applied to largest probability. Expected move = mean_return |
-| **Tuneable Parameters** | None — this is a thin normalisation layer |
-| **What "good" looks like** | Dominant probability clearly above others; expected_move_pips consistent with direction |
-
-#### 9. Confidence Engine v2
-
-| Aspect | Detail |
-|--------|--------|
-| **Input** | ConfidenceInput (probabilities, similarity metrics, distribution shape, regime metadata) + frozen CalibrationParameters |
-| **Output** | confidence_final [0, 1] = calibration_adjusted_base × regime_accuracy_modifier × sample_density_modifier |
-| **Core Formula** | Base = bucket success rate (10 buckets by max probability concentration); Regime modifier = observed accuracy for this regime; Sample density = accuracy at this sample size from density curve |
-| **Tuneable Parameters** | CalibrationParameters (frozen per engine version): bucket_success_rates, regime_accuracy record, sample_density_curve, global_fallback (base 0.5, regime 0.5, sample 0.5). Minimum 30 forecasts per grouping before group-specific params used |
-| **What "good" looks like** | Higher confidence → higher accuracy (calibration). Forecasts with confidence > 0.6 should outperform those below 0.4 |
-| **Key insight for tuning** | These parameters are derived from the Evaluation Engine's historical accuracy data. As more forecasts are evaluated, these should be updated to reflect observed performance |
-
-#### 10. Tradeability Engine (Runtime)
-
-| Aspect | Detail |
-|--------|--------|
-| **Input** | Forecast (batch-computed) + live: spread, session, liquidity proxy, news risk flag |
-| **Output** | tradeability_score [0, 1], label (GO/CONDITIONAL/NO_GO) |
-| **Core Formula** | score = S_static × D_dynamic; S_static = confidence_final; D_dynamic = spread_factor × session_factor × liquidity_factor × news_factor |
-| **Tuneable Parameters** | Label thresholds (GO > 0.75, CONDITIONAL ≥ 0.45); Spread factors (low=1.0, medium=0.7, high=0.3); Session factors (London=1.0, NY=0.8, Asia=0.5); Liquidity factors (high=1.0, medium=0.75, low=0.5); News (clear=1.0, blocked=0.0) |
-| **What "good" looks like** | GO predictions deliver positive expected value; NO_GO correctly identifies conditions where predictions are unreliable |
-
-### Proposed: Computation Calibration Process
-
-The platform currently retrains the ML service, but the deterministic engines above rely on fixed thresholds and weights that were set during development. A systematic process for evaluating and adjusting these would improve prediction quality over time.
-
-#### What to Track (per stage, per regime, per asset)
-
-1. **Stage contribution analysis** — For each evaluated forecast, decompose the final score into per-stage contributions. Which layer of similarity contributed most? Did macro/sentiment add signal or noise?
-2. **Regime accuracy breakdown** — Track direction accuracy per regime type. If "expansion" regime predictions are 35% accurate but "trend" is 65%, the expansion similarity weights may need adjustment.
-3. **Threshold sensitivity** — Periodically evaluate: what if FLAT_THRESHOLD was 3 instead of 2? What if topology weight was 0.15 instead of 0.10? Run counterfactual analysis against the research archive.
-4. **Layer signal-to-noise** — Compute correlation between each fingerprint layer's similarity and actual outcome accuracy. If L5 (sentiment) similarity shows no correlation with better outcomes, reduce its weight.
-5. **Confidence calibration drift** — Monitor whether confidence scores remain well-calibrated over rolling 30-day windows. If 70% confidence predictions are only 50% accurate, recalibrate.
-
-#### Where Parameters Live
-
-| Engine | Parameter Location | Update Process |
-|--------|-------------------|----------------|
-| Sentiment | Hardcoded in engine file | Code change + deploy |
-| Macro Context | COMPOSITE_WEIGHTS in engine file | Code change + deploy |
-| Fingerprint | Constants at top of engine file | Code change + deploy |
-| Topology | Constants (CLUSTER_TOLERANCE_PIPS, etc.) | Code change + deploy |
-| Regime v2 | Threshold constants in engine file | Code change + deploy |
-| Similarity | REGIME_WEIGHT_MATRICES + TOPOLOGY_SIMILARITY_WEIGHT in constants.ts | Code change + deploy |
-| Outcome | FLAT_THRESHOLD in constants.ts | Code change + deploy |
-| Confidence v2 | CalibrationParameters in engine_versions.config DB table | DB update (versioned) |
-| Tradeability | TRADEABILITY_CONFIG in engine file | Code change + deploy |
-
-#### Recommended Evaluation Cadence
-
-- **Weekly**: Review direction accuracy by regime, identify underperforming regimes
-- **Monthly**: Run threshold sensitivity analysis against research archive (counterfactual backtest)
-- **Per 100 evaluated forecasts**: Update CalibrationParameters for Confidence Engine v2
-- **Per asset onboarding**: Validate that weight matrices perform for the new asset's characteristics
-- **Quarterly**: Full pipeline contribution analysis — determine if any layer should have its weight increased/decreased
-
-## Known Limitations / Gaps
-
-### Prediction Quality
-- **No ML model** — forecasts rely purely on historical similarity matching (no XGBoost, no gradient boosting)
-- **No volatility-normalised targets** — outcome returns are raw pips, not relative to current regime
-- **Sentiment_hint mostly 0** — news providers supply neutral hints; no LLM-based scoring
-- **No SHAP/explainability** — can't attribute which features drove a forecast
-- **No model drift detection** — no rolling accuracy monitoring per regime
-
-### Data Gaps
-- **Sentiment engine disabled in registry** — `engines.sentiment: false` for EURUSD (was just wired, needs registry toggle)
-- **Single asset** — only EUR/USD configured with historical data
-- **No intermarket features in fingerprint** — DXY/VIX/SPX not used as fingerprint dimensions
-- **No session/temporal features in fingerprint** — hour-of-day, day-of-week not encoded
-
-### Infrastructure
-- **API traffic pinned to old revision** — Secret `rapidapi-proxy-secret` missing prevents new revision serving
-- **Auth middleware not wired** — API keys exist but endpoints are unauthenticated
-- **Tradeability always NO_GO** — live spread/liquidity feeds not connected
-- **No monitoring/alerting** — no Cloud Monitoring dashboards
-- **No web frontend** — only local HTML dashboard
+---
 
 ## File Structure
 
 ```
 src/
-├── api/               Express routes + middleware (auth, rate-limit, edge-cache, response-filter)
-├── config/            Environment vars, constants, research asset registry
-├── engines/           12 pure computation engines
-│   ├── sentiment-engine.ts        6-dim sentiment vector (Phase 10)
-│   ├── macro-context-engine.ts    8-dim macro vector (Phase 10)
-│   ├── news-risk-evaluator.ts     Runtime news risk flag (Phase 10)
-│   ├── fingerprint-engine.ts      5-layer fingerprint + extended features
-│   ├── similarity-engine.ts       Regime-weighted cosine + topology blending
-│   ├── outcome-engine.ts          Empirical outcome distribution
-│   ├── forecast-engine.ts         Directional probability forecasting
-│   ├── confidence-engine-v2.ts    Evidence-based confidence (Phase 4)
-│   ├── tradeability-engine.ts     S_static × D_dynamic scoring
-│   ├── topology-engine.ts         S/R structural levels (Phase 6)
-│   ├── regime-engine-v2.ts        9-regime classification (Phase 8)
-│   └── fingerprint-serialiser.ts  Deterministic serialisation
-├── research/          Research namespace (Phases 1–5)
-├── services/          Side-effect services
-│   ├── ingestion/         OHLC ingestion (3-provider fallback)
-│   ├── integrity/         Daily integrity (gaps, news, calendar, derivations)
-│   ├── cache/             Forecast cache writer
-│   ├── observability/     Execution trace emitter
-│   ├── pipeline/          Batch orchestrator
-│   └── versioning/        Engine version management
-├── types/             TypeScript interfaces + enums
-├── api-entry.ts       Cloud Run API entry point
-├── batch-entry.ts     Cloud Run batch entry point (14-stage pipeline)
-└── integrity-entry.ts Cloud Run integrity entry point
+├── api/                Express routes + middleware (auth, rate-limit, edge-cache)
+├── config/             env.ts, constants.ts, research-assets.ts
+├── engines/            12 pure computation engines
+├── research/           Evaluation engine, calibration, archive writers
+├── services/           Side-effect services (ingestion, integrity, cache, observability, pipeline)
+├── types/              TypeScript interfaces + enums
+├── batch-entry.ts      Batch pipeline entry point (14 stages)
+├── api-entry.ts        API service entry point
+└── integrity-entry.ts  Integrity job entry point
 
-scripts/               Utilities (OpenAPI gen, debug, seed, backfill)
-tests/                 128+ test files, 1400+ tests
-deploy/                Cloud Run + Scheduler YAML configs
-cloudbuild.yaml        CI/CD (test → build 3 images → push → deploy 3 services)
+ml_service/
+├── app/
+│   ├── main.py         FastAPI app
+│   ├── routers/        predict, train, calibration, drift, explainability, health
+│   └── services/       trainer, model_store, feature_engineer, calibration
+└── tests/
+
+dashboard/
+├── index.html          Main dashboard (Trader + Developer views)
+├── *.ts                Individual component modules (testable)
+└── __tests__/          Dashboard component tests
+
+deploy/                 Cloud Run + Scheduler YAML configs
+cloudbuild.yaml         CI/CD pipeline
 ```
 
-## Cost (Estimated Monthly)
+---
 
-| Component | Cost |
-|-----------|------|
-| Cloud Run (API, scale to zero) | ~£2-5 |
-| Cloud Run (Batch, 6x/day × 3.5s) | ~£1 |
-| Cloud Run (Integrity, 1x/day × 3s) | ~£0.50 |
-| Supabase (Free tier) | £0 |
-| Data providers (all free tier) | £0 |
-| Cloud Build (triggered on deploy) | ~£1 |
-| **Total** | **~£5-8/month** |
+## Test Suite
 
-## Completed Specs
+- **164 test files**, 1,950 tests total
+- 35+ property-based tests (fast-check) for mathematical invariants
+- Integration tests for pipeline, API, research lifecycle
+- All tests run in CI (Cloud Build) before deploy
+- TypeScript strict mode, zero compile errors
+- One known flaky test (integrity-orchestrator property 11, non-deterministic)
 
-| Spec | Phase | Description |
-|------|-------|-------------|
-| `financial-intelligence-platform` | Foundation | Core platform architecture and all engines |
-| `historical-data-bootstrap` | Data | Historical data seeding (10,500 candles) |
-| `pipeline-gaps-fix` | Bugfix | Pipeline gap detection and repair |
-| `daily-data-integrity` | Data | Daily integrity job (gaps, news, calendar) |
-| `commercial-api-release` | API | Auth, rate limiting, tiered access |
-| `research-platform-evolution` | Research | Phases 1-5 (archive, evaluation, confidence) |
-| `research-asset-registry` | Config | Centralised asset configuration |
-| `sentiment-macro-engines` | Engines | Sentiment, Macro Context, News Risk (ALL TASKS ✓) |
+---
+
+## What's Working Well (July 2026)
+
+1. ✓ Full 14-stage batch pipeline (3-7s per cycle per asset)
+2. ✓ XGBoost + similarity ensemble producing blended predictions
+3. ✓ ML service trained with 29K samples, serving predictions in 15-40ms
+4. ✓ Two assets active (EURUSD, GBPUSD) with full historical data
+5. ✓ Fingerprint persistence now flowing (enables outcome → evaluation chain)
+6. ✓ Weekly ML retraining scheduled
+7. ✓ Daily data integrity job running
+8. ✓ API serving forecasts with Swagger UI
+9. ✓ CI/CD fully automated (test → build → deploy)
+10. ✓ Research archive accumulating data for future calibration
+
+---
+
+## Change Log
+
+### 2026-07-24 — CURRENT-STATE.md comprehensive rewrite + auto-update hook
+- What: Rewrote CURRENT-STATE.md from scratch as a full technical report covering all pipelines, calculations, ML service, API, dashboard, database schema, infrastructure, known issues, and complexity analysis. Created an `agentStop` hook (`update-current-state`) that automatically appends changelog entries and updates stale sections after each session.
+- Why: Previous document was outdated (last updated July 12) and missing ML service, ensemble blending, calibration, fingerprint persistence, and other recent additions. Needed an accurate reference for decision-making and system simplification analysis.
+- Impact: No system behavior change. Document now reflects actual production state as of July 24, 2026.
+
+### 2026-07-22 — ML_SERVICE_URL bugfix + ML service operational
+- What: Added `ML_SERVICE_URL` to `EnvConfig` interface with default `http://localhost:5000`. Updated `batch-entry.ts` to use typed config instead of raw `process.env`. Deployed ML service to Cloud Run. Trained XGBoost model (29K samples, ~44% accuracy). Created weekly retrain scheduler (`fip-ml-weekly-retrain`, Sundays 02:00 UTC).
+- Why: Pipeline was skipping ML prediction entirely because `ML_SERVICE_URL` was undefined — no default, not in `.env.example`, not in typed config.
+- Impact: Predictions now use 50/50 ensemble blend (similarity + XGBoost) instead of similarity-only. Dashboard shows actionable error messages for ML/calibration status.
+
+### 2026-07-22 — Fingerprint persistence in batch pipeline
+- What: Added fingerprint upsert to `market_fingerprints` table during the batch pipeline's fingerprint stage (previously only stored in `fingerprint_topology`). Required columns: all vector columns + `session` + `batch_id`.
+- Why: Outcome backfill stage couldn't compute forward returns because fingerprints weren't in `market_fingerprints`. This blocked the entire evaluation chain (no outcomes → no evaluations → no calibration).
+- Impact: Outcomes now computed for each batch run's fingerprints. Evaluation pipeline self-heals. Calibration model will become trainable once ~50 evaluations accumulate (~5-7 days).
+
+### 2026-07-22 — ML trainer pagination fix
+- What: Updated `_supabase_query()` in `ml_service/app/services/trainer.py` to paginate through all rows (offset-based, 1000 per page) instead of relying on Supabase's default 1000-row limit.
+- Why: Trainer was fetching only 1000 fingerprints and 1000 outcomes (different sets), producing 0 joinable samples. Training always failed with "Insufficient training data: 0 samples."
+- Impact: XGBoost training now successfully processes 29K+ samples from the full historical dataset.
+
+### 2026-07-22 — Calibration service schema fix
+- What: Updated `calibration.py` to query `research_evaluations` joined with `research_forecasts` (using `created_at` instead of nonexistent `evaluated_at`). Updated data parsing to extract predicted probabilities from forecast's `direction_probabilities` field.
+- Why: Calibration training query used wrong column name and expected columns that don't exist in the table schema.
+- Impact: Calibration training will work correctly once 50+ evaluated forecasts exist. Currently blocked by insufficient evaluation data.
+
+### 2026-07-22 — Min training samples reduced to 200
+- What: Changed default `min_samples` from 500 to 200 in both `train.py` endpoint and `trainer.py` service.
+- Why: Lower barrier for initial training. With 36K+ samples available, the minimum was never the binding constraint, but it prevents future edge cases.
+- Impact: XGBoost and calibration training require fewer samples to initiate.
+
+### 2026-07-22 — Dashboard error messaging improvements
+- What: Updated `dashboard/index.html` and `dashboard/continuous-learning-card.ts` to show differentiated, actionable messages based on `failure_reason`: "ML service URL not configured", "ML service not running — start with: docker run ...", "Calibration model not yet trained".
+- Why: Previous dashboard showed generic "Calibration skipped" or raw error strings with no guidance for the operator.
+- Impact: Dashboard now provides actionable guidance for each failure mode.
